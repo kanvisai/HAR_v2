@@ -5,9 +5,16 @@ from __future__ import annotations
 import argparse
 import csv
 import random
+import sys
 import zipfile
 from collections import Counter
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from har_actions.pose import clip_directory, fps_and_video
 
 
 def load_rows(csv_path: Path) -> list[dict[str, str]]:
@@ -72,29 +79,76 @@ def print_list(rows: list[dict[str, str]], *, paths_only: bool) -> None:
         )
 
 
-def _clip_bundle_files(poses_path: Path) -> list[Path]:
-    user_dir = poses_path.parent
-    if not user_dir.is_dir():
-        return [poses_path] if poses_path.is_file() else []
-    files = [p for p in user_dir.iterdir() if p.is_file()]
-    return files if files else ([poses_path] if poses_path.is_file() else [])
-
-
-def _arc_prefix(poses_path: Path, data_root: Path, index: int) -> Path:
-    user_dir = poses_path.parent
+def _clip_prefix(poses_path: Path, data_root: Path, index: int) -> Path:
+    clip_dir = clip_directory(poses_path).resolve()
     try:
-        root = data_root.resolve()
-        if user_dir.is_relative_to(root):
-            return user_dir.relative_to(root)
-    except (ValueError, AttributeError):
-        pass
-    try:
-        return user_dir.relative_to(poses_path.parents[2])
+        return clip_dir.relative_to(data_root.resolve())
     except ValueError:
-        return Path(f"clip_{index:04d}") / user_dir.name
+        return Path(f"clip_{index:04d}")
 
 
-def build_zip(rows: list[dict[str, str]], output: Path, *, limit: int) -> None:
+def collect_zip_members(
+    poses_path: Path,
+    data_root: Path,
+    index: int,
+    *,
+    include_video: bool,
+) -> tuple[list[tuple[Path, str]], str, str]:
+    """Ficheros a empaquetar y notas (carpeta clip, vídeo o aviso)."""
+    poses_path = poses_path.resolve()
+    clip_dir = clip_directory(poses_path).resolve()
+    clip_rel = _clip_prefix(poses_path, data_root, index)
+    user_dir = poses_path.parent
+    user_name = user_dir.name
+
+    members: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+
+    def add(abs_path: Path, arc: Path) -> None:
+        if not abs_path.is_file():
+            return
+        key = str(arc).replace("\\", "/")
+        if key in seen:
+            return
+        seen.add(key)
+        members.append((abs_path, key))
+
+    if user_dir.is_dir():
+        for fp in sorted(user_dir.iterdir()):
+            if fp.is_file():
+                add(fp, clip_rel / user_name / fp.name)
+    elif poses_path.is_file():
+        add(poses_path, clip_rel / user_name / poses_path.name)
+
+    for name in ("meta.json", "clip.mp4", "clip_buffer.mp4"):
+        add(clip_dir / name, clip_rel / name)
+
+    video_note = "sin vídeo"
+    if include_video:
+        _fps, video = fps_and_video(poses_path)
+        if video is not None and video.is_file():
+            video = video.resolve()
+            video_note = str(video)
+            try:
+                add(video, clip_rel / video.relative_to(clip_dir))
+            except ValueError:
+                add(video, clip_rel / "_video" / video.name)
+        else:
+            parent_mp4 = clip_dir.parent / f"{clip_dir.name}.mp4"
+            if parent_mp4.is_file():
+                video_note = str(parent_mp4)
+                add(parent_mp4, clip_rel / "_video" / parent_mp4.name)
+
+    return members, str(clip_dir), video_note
+
+
+def build_zip(
+    rows: list[dict[str, str]],
+    output: Path,
+    *,
+    limit: int,
+    include_video: bool,
+) -> None:
     if limit <= 0:
         raise SystemExit("--zip requiere N > 0")
     selected = rows[: min(limit, len(rows))]
@@ -116,18 +170,26 @@ def build_zip(rows: list[dict[str, str]], output: Path, *, limit: int) -> None:
 
             data_root_s = row.get("data_root", "")
             data_root = Path(data_root_s).resolve() if data_root_s else poses_path.parents[3]
-            prefix = _arc_prefix(poses_path, data_root, i)
+
+            bundle, clip_dir_s, video_s = collect_zip_members(
+                poses_path,
+                data_root,
+                i,
+                include_video=include_video,
+            )
 
             manifest.append(
                 f"#{i} cat={row.get('category')} {row.get('audit_class')} "
                 f"htb={row.get('hand_to_body')} motivo={row.get('motivo')}"
             )
             manifest.append(f"    poses: {poses_path}")
-            manifest.append(f"    zip:   {prefix}/")
+            manifest.append(f"    clip:  {clip_dir_s}")
+            manifest.append(f"    video: {video_s}")
 
-            for fp in _clip_bundle_files(poses_path):
-                arc = str(prefix / fp.name)
-                zf.write(fp, arcname=arc)
+            if not bundle:
+                manifest.append("    aviso: sin ficheros (revisa rutas en disco)")
+            for abs_path, arc in bundle:
+                zf.write(abs_path, arcname=arc)
                 added += 1
 
             manifest.append("")
@@ -187,7 +249,12 @@ def main() -> None:
         type=int,
         metavar="N",
         default=0,
-        help="Empaqueta N clips: carpeta user_* (todos los ficheros junto a poses_full.npy)",
+        help="Empaqueta N clips: user_*, meta.json y vídeo del clip (clip.mp4 / meta)",
+    )
+    parser.add_argument(
+        "--skip-video",
+        action="store_true",
+        help="No incluir .mp4 en el zip (solo npy y meta)",
     )
     parser.add_argument(
         "-o",
@@ -231,7 +298,12 @@ def main() -> None:
         print_list(rows[: args.list], paths_only=args.paths_only)
 
     if args.zip > 0:
-        build_zip(rows, args.output.expanduser().resolve(), limit=args.zip)
+        build_zip(
+            rows,
+            args.output.expanduser().resolve(),
+            limit=args.zip,
+            include_video=not args.skip_video,
+        )
 
 
 if __name__ == "__main__":
