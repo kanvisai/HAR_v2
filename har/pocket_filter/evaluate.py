@@ -276,7 +276,8 @@ def _count_swing_near_runs(
             if np.isfinite(axis[j]):
                 mins.append(float(axis[j]))
             j += 1
-        if mins and float(np.min(mins)) > cfg.tuck_axis_max:
+        swing_thr = cfg.tuck_axis_max + cfg.swing_axis_margin
+        if mins and float(np.min(mins)) > swing_thr:
             swings += 1
         i = j
     return swings
@@ -415,8 +416,10 @@ def _evaluate_pair(
                 continue
 
             tuck_end = min(end, eval_end, i + tuck_horizon)
-            tuck_ok, d_min, _a_min = _tuck_qualifies(d, axis, i, tuck_end, cfg)
+            tuck_ok, d_min, a_min = _tuck_qualifies(d, axis, i, tuck_end, cfg)
             if not tuck_ok:
+                continue
+            if d_min is not None and (d[origin_idx] - d_min) < cfg.delta_tuck_extra:
                 continue
 
             seg = d[start : end + 1]
@@ -469,9 +472,11 @@ def _evaluate_pair(
                 if d[k] >= cfg.r_far and axis[k] >= cfg.extend_axis_min:
                     prior_extend = True
                     break
-            if prior_extend or d_min_run <= cfg.deep_contact_r or (
-                a_min_run is not None and a_min_run <= cfg.tuck_axis_max * 0.75
-            ):
+            deep = d_min_run is not None and d_min_run <= cfg.deep_contact_r
+            tucked = a_min_run is not None and a_min_run <= cfg.tuck_axis_max * 0.65
+            approach_ok = prior_extend and tuck_ok
+            contact_ok = deep and tucked
+            if approach_ok or contact_ok:
                 return PairEvidence(
                     wrist=wrist,  # type: ignore
                     pocket=pocket,  # type: ignore
@@ -572,7 +577,7 @@ def evaluate_pocket(
     resultado, motivo, best = fuse_pairs(pairs, cfg)
     t0 = _time_at(eval_start, timestamps, fps)
     t1 = _time_at(eval_end, timestamps, fps)
-    result = PocketResult(
+    return PocketResult(
         resultado=resultado,
         hand_to_body=resultado == "COMPATIBLE",
         filter_fp_safe=resultado == "INCOMPATIBLE",
@@ -586,9 +591,6 @@ def evaluate_pocket(
         best_pair=best,
         intervalo_s=(t0, t1),
     )
-    from pocket_filter.context_guard import apply_context_guard
-
-    return apply_context_guard(result, poses, fps=fps, aspect=aspect)
 
 
 # Re-export for backwards compatibility

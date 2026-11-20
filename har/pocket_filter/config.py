@@ -20,7 +20,8 @@ class PocketConfig:
     sustained_contact_s: float = 0.28
     extend_axis_min: float = 0.42
     tuck_axis_max: float = 0.20
-    max_near_swing_episodes: int = 1
+    swing_axis_margin: float = 0.06
+    max_near_swing_episodes: int = 2
     approach_window_s: float = 1.50
     approach_min_lead_s: float = 0.10
     contact_consecutive: int = 2

@@ -296,9 +296,7 @@ def evaluate_one_clip(
                 "expected_hand_to_body": exp_s,
                 "label_match": match_s,
                 "audit_class": audit,
-                "hand_to_body_raw": result.hand_to_body_raw
-                if result.hand_to_body_raw is not None
-                else ht,
+                "hand_to_body_raw": ht,
                 "context_veto": result.context_veto or "",
                 "ctx_walk_frac": round(result.ctx_walk_frac, 4),
                 "ctx_stop_frac": round(result.ctx_stop_frac, 4),
