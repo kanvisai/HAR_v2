@@ -107,6 +107,13 @@ cd har
 .venv/bin/python3 batch_data_result.py /path/data_result --csv /ruta/informe_pocket.csv --workers 20
 .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --csv /tmp/legacy.csv --workers 20
 .venv/bin/python3 batch_data_result.py /path/data_result --category 6 --csv cat6_audit.csv --workers 20
+
+### Auditoría CSV + zip de clips
+
+```bash
+.venv/bin/python3 audit_pocket_csv.py /ruta/resultados.csv -c 6 --class FN --list-all
+.venv/bin/python3 audit_pocket_csv.py /ruta/resultados.csv -c 6 --class FN --zip 40 --shuffle -o fn_cat6_40.zip
+```
 .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
 ```
 
