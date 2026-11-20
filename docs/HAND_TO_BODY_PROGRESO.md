@@ -14,7 +14,8 @@
 | **C** | Confianza 0–1 + política v1 (umbral global) | `confidence.py`, `action_policy.py` — mató recall (~49 % cat 6) |
 | **D** | Política v2 walk vs stop (sin categoría) | `action_policy.py` umbrales por motivo + marcha |
 | **E** | HAR1 cotidiano + resumen `har2_test` | `detect_cotidian_actions`, `htb_tier`, `accion_recomendada` |
-| **F** (esta prueba) | **`htb_tier`**: `alert` / `review` / `none` — eje no alarma solo | `action_policy.py`, CSV `htb_tier` |
+| **F** | **`htb_tier`**: `alert` / `review` / `none` | `action_policy.py` |
+| **G** (actual) | **`gate_mode: robbery_confirm`** — solo confirma/veta `hand_to_body` para filtro motion | `decide_robbery_confirm()`, sin cotidiano |
 
 ---
 
@@ -34,12 +35,15 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 | | cat 6 | cat 0 FP | FP motivos (aprox / contacto / eje) |
 |---|-------|----------|--------------------------------------|
 | `rune_policy.csv` | 75 % (159/212) | 38 % (1040/2763) | 540 / 442 / 296 |
+| `har_progress_batch` (F, axis→review) | **49 %** (103/212) alarma | **27 %** FP (756/2763) | **0 / 392 / 364** eje fuera de alert |
 
 ---
 
 ## Cómo volver atrás
 
-1. **Solo pocket (sin política)** — en `pocket_filter_config.json`:
+1. **Filtro robo (actual):** `"gate_mode": "robbery_confirm"` en `action_policy`.
+2. **Modo anterior (tiers + walk):** `"gate_mode": "full"`.
+3. **Solo pocket (sin política)** — en `pocket_filter_config.json`:
    ```json
    "action_policy": { "enabled": false }
    ```
@@ -52,6 +56,13 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 4. **CSV columnas nuevas:** `hand_to_body_raw`, `hand_to_body_confidence`, `primary_action`, `htb_tier` — ignorables si consumes solo `hand_to_body`.
 
 ---
+
+## Modo `robbery_confirm` (G)
+
+- **Confirmar** (`hand_to_body=true`): `CONTACTO`; `APROXIMACION` solo sin marcha; `EJE` solo parado (`stop_frac`) y confianza.
+- **Nunca confirmar** aprox/eje **caminando**; contacto caminando exige conf ≥ `gate_contact_min_confidence_while_walking`.
+- **`hand_to_body_raw`**: pocket COMPATIBLE (auditoría).
+- Integración motion: `if candidato_robo and hand_to_body → seguir; else → suprimir FP`.
 
 ## Contrato de salida (producción sin categoría)
 
@@ -109,11 +120,20 @@ echo "=== barrido calibración 0+6+14 ==="
 echo "=== auditoría ==="
 .venv/bin/python3 audit_pocket_csv.py /tmp/har_progress_batch.csv
 
+echo "=== recall cat6: alarma + cola review (col 23=htb_tier) ==="
+awk -F',' 'NR>1 && $3==6 {
+  if ($6=="true" || $23=="review") tp++; else fn++;
+  tot++
+} END { printf "caught %d / %d = %.1f%%\n", tp+0, tot+0, 100*tp/(tot?tot:1) }' /tmp/har_progress_batch.csv
+
 echo "=== FP cat0 motivo ==="
 awk -F',' 'NR>1 && $3==0 && $13=="FP" {print $9}' /tmp/har_progress_batch.csv | sort | uniq -c | sort -rn
 
-echo "=== htb_tier cat6 FN/TP ==="
-awk -F',' 'NR>1 && $3==6 {print $13,$24}' /tmp/har_progress_batch.csv | sort | uniq -c | sort -rn | head -20
+echo "=== FP cat0 htb_tier (col 23) ==="
+awk -F',' 'NR>1 && $3==0 && $6=="true" {print $23}' /tmp/har_progress_batch.csv | sort | uniq -c
+
+echo "=== FN cat6 raw+tier ==="
+awk -F',' 'NR>1 && $3==6 && $13=="FN" {print $14,$23}' /tmp/har_progress_batch.csv | sort | uniq -c | sort -rn | head -15
 
 echo "LOG: $LOG"
 ```

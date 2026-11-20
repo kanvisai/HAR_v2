@@ -4,8 +4,10 @@ from __future__ import annotations
 import numpy as np
 
 from pocket_filter.action_policy import (
+    ActionPolicyConfig,
     apply_action_policy,
     decide_hand_to_body,
+    decide_robbery_confirm,
     load_action_policy_config,
 )
 from pocket_filter.confidence import pocket_hand_to_body_confidence
@@ -88,6 +90,57 @@ def test_walking_weak_axis_rejected_stationary_ok():
     assert not ok2 and veto2 == "POLICY_WALK_OVER_WEAK_POCKET"
 
 
+def test_robbery_confirm_blocks_approx_while_walking():
+    policy = ActionPolicyConfig(
+        enabled=True,
+        gate_mode="robbery_confirm",
+        approx_min_confidence=0.56,
+        walk_active_frac=0.44,
+        walk_active_clip_min_s=1.0,
+    )
+    walking = {
+        "walk_frac": 0.5,
+        "walk_s": 2.0,
+        "stop_frac": 0.1,
+        "stop_s": 0.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, veto = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.7,
+        motivo="APROXIMACION_OBSERVADA",
+        signals=walking,
+        policy=policy,
+    )
+    assert not ok
+    assert veto == "GATE_WALK_NO_CONFIRM"
+
+
+def test_robbery_confirm_allows_axis_when_quiet():
+    policy = ActionPolicyConfig(
+        gate_mode="robbery_confirm",
+        axis_min_confidence=0.50,
+        axis_quiet_stop_frac=0.30,
+    )
+    quiet = {
+        "walk_frac": 0.1,
+        "walk_s": 0.2,
+        "stop_frac": 0.5,
+        "stop_s": 3.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, veto = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.55,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=quiet,
+        policy=policy,
+    )
+    assert ok and veto is None
+
+
 def test_axis_compatible_goes_review_tier_not_alert():
     T = 12
     poses = np.stack(
@@ -103,7 +156,7 @@ def test_axis_compatible_goes_review_tier_not_alert():
         result.motivo = "ACERCAMIENTO_EJE_TORSO"
         result.hand_to_body = True
         result.hand_to_body_raw = True
-    policy = load_action_policy_config()
+    policy = ActionPolicyConfig(gate_mode="full", axis_max_tier="review")
     out = apply_action_policy(result, poses, fps=12.0, aspect=1.0, policy=policy)
     if result.motivo == "ACERCAMIENTO_EJE_TORSO" and bool(result.hand_to_body_raw):
         assert out.htb_tier in ("review", "alert")

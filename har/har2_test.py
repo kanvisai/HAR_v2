@@ -27,7 +27,7 @@ import numpy as np
 from har_actions.detect import detect, detect_mobility_context, gesture_seconds
 from har_actions.pose import fps_and_video, frame_aspect, load_poses, smooth
 from pocket_filter.config import hand_to_body_backend, load_pocket_config
-from pocket_filter.action_policy import evaluate_pocket_with_policy
+from pocket_filter.action_policy import evaluate_pocket_with_policy, load_action_policy_config
 from pocket_filter.io import load_poses_array
 from pocket_filter.types import PocketResult, pocket_result_to_dict
 
@@ -87,6 +87,9 @@ def _print_summary(
             f"  · conf {_conf_pct(result.hand_to_body_confidence)}"
             + (f"  · {result.context_veto}" if result.context_veto else "")
         )
+    policy_cfg = load_action_policy_config(args.config)
+    gate = policy_cfg.gate_mode if policy_cfg.enabled else "off"
+    print(f"  Modo política:     {gate}")
     print(f"  Clip: {poses_path.name}  ·  {result.n_frames} frames · {fps:.1f} fps")
     if result.motivo and (hand_to_body or result.hand_to_body_raw):
         print(f"  Motivo geométrico:     {result.motivo}")

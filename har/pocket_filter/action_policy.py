@@ -44,7 +44,10 @@ COTIDIAN_PRIMARY = (
 @dataclass
 class ActionPolicyConfig:
     enabled: bool = True
+    """full = tiers + acciones cotidianas; robbery_confirm = solo boolean hand_to_body."""
+    gate_mode: str = "robbery_confirm"
     strong_min_confidence: float = 0.48
+    gate_contact_min_confidence_while_walking: float = 0.62
     approx_min_confidence: float = 0.56
     approx_min_confidence_while_walking: float = 0.68
     axis_min_confidence: float = 0.50
@@ -140,6 +143,51 @@ def decide_hand_to_body(
     return False, "POLICY_LOW_CONFIDENCE" if conf < need else None
 
 
+def decide_robbery_confirm(
+    *,
+    pocket_compatible: bool,
+    conf: float,
+    motivo: str,
+    signals: dict[str, float],
+    policy: ActionPolicyConfig,
+) -> tuple[bool, str | None]:
+    """
+    Confirmación binaria para candidatos del modelo de robo (sin clasificar pasillo).
+    """
+    if not pocket_compatible:
+        return False, "GATE_NO_POCKET"
+
+    walking = _is_walking(signals, policy)
+
+    if motivo in STRONG_MOTIVES:
+        need = policy.strong_min_confidence
+        if walking:
+            need = max(need, policy.gate_contact_min_confidence_while_walking)
+        if conf >= need:
+            return True, None
+        return False, "GATE_LOW_CONFIDENCE"
+
+    if motivo in APPROACH_MOTIVES:
+        if walking:
+            return False, "GATE_WALK_NO_CONFIRM"
+        if conf >= policy.approx_min_confidence:
+            return True, None
+        return False, "GATE_LOW_CONFIDENCE"
+
+    if motivo in AXIS_MOTIVES:
+        if walking:
+            return False, "GATE_WALK_NO_CONFIRM"
+        if signals["stop_frac"] < policy.axis_quiet_stop_frac:
+            return False, "GATE_AXIS_NOT_QUIET"
+        if conf >= policy.axis_min_confidence:
+            return True, None
+        if conf >= policy.axis_min_confidence - 0.03:
+            return True, None
+        return False, "GATE_LOW_CONFIDENCE"
+
+    return False, "GATE_WEAK_MOTIVO"
+
+
 def _cotidian_durations(
     poses: np.ndarray,
     *,
@@ -206,19 +254,11 @@ def apply_action_policy(
     conf = pocket_hand_to_body_confidence(result, pocket_cfg)
     result.hand_to_body_confidence = conf
 
-    seconds, visible = _cotidian_durations(poses, fps=fps, aspect=aspect)
-    result.cotidian_seconds = {k: round(v, 3) for k, v in seconds.items() if v > 0}
-
     if not policy.enabled:
-        result.primary_action = (
-            "hand_to_body"
-            if result.hand_to_body
-            else _best_cotidian(
-                seconds, visible, min_frac=policy.cotidian_min_visible_frac
-            )[0]
-        )
-        result.primary_action_confidence = conf if result.hand_to_body else 0.0
+        result.cotidian_seconds = {}
         result.htb_tier = "alert" if result.hand_to_body else "none"
+        result.primary_action = "hand_to_body" if result.hand_to_body else "no_gesture"
+        result.primary_action_confidence = conf if result.hand_to_body else 0.0
         return result
 
     gcfg = load_context_guard_config(config_path)
@@ -233,6 +273,26 @@ def apply_action_policy(
     result.ctx_stop_s = signals["stop_s"]
 
     raw = bool(result.hand_to_body_raw)
+
+    if policy.gate_mode == "robbery_confirm":
+        accept, veto = decide_robbery_confirm(
+            pocket_compatible=raw,
+            conf=conf,
+            motivo=result.motivo,
+            signals=signals,
+            policy=policy,
+        )
+        result.hand_to_body = accept
+        result.context_veto = veto
+        result.htb_tier = "alert" if accept else "none"
+        result.primary_action = "hand_to_body" if accept else "no_gesture"
+        result.primary_action_confidence = conf if accept else 0.0
+        result.cotidian_seconds = {}
+        return result
+
+    seconds, visible = _cotidian_durations(poses, fps=fps, aspect=aspect)
+    result.cotidian_seconds = {k: round(v, 3) for k, v in seconds.items() if v > 0}
+
     accept, veto = decide_hand_to_body(
         pocket_compatible=raw,
         conf=conf,

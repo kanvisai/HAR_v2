@@ -40,6 +40,8 @@
   },
   "action_policy": {
     "enabled": true,
+    "gate_mode": "robbery_confirm",
+    "gate_contact_min_confidence_while_walking": 0.62,
     "strong_min_confidence": 0.48,
     "approx_min_confidence": 0.56,
     "approx_min_confidence_while_walking": 0.68,
