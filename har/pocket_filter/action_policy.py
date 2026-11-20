@@ -410,7 +410,26 @@ def evaluate_pocket_with_policy(
     interval_s: tuple[float, float] | None = None,
     context_pad_s: float = 1.0,
     config_path: Path | None = None,
+    use_temporal: bool | None = None,
 ) -> PocketResult:
+    if interval_s is None and use_temporal is not False:
+        from pocket_filter.temporal_eval import load_temporal_config, evaluate_pocket_temporal
+
+        tcfg = load_temporal_config(config_path)
+        if (use_temporal is True or tcfg.enabled) and tcfg.enabled:
+            return evaluate_pocket_temporal(
+                poses,
+                fps=fps,
+                aspect=aspect,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                config=config,
+                timestamps=timestamps,
+                row_mask=row_mask,
+                keypoint_conf=keypoint_conf,
+                config_path=config_path,
+            )
+
     result = evaluate_pocket(
         poses,
         fps=fps,

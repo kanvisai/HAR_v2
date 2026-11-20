@@ -38,6 +38,12 @@
     "frozen_repeat_frames": 5,
     "frozen_torso_eps": 0.008
   },
+  "temporal": {
+    "enabled": true,
+    "window_s": 2.5,
+    "step_s": 1.25,
+    "context_pad_s": 0.35
+  },
   "action_policy": {
     "enabled": true,
     "gate_mode": "robbery_confirm",

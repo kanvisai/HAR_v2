@@ -93,6 +93,9 @@ def _print_summary(
     gate = policy_cfg.gate_mode if policy_cfg.enabled else "off"
     print(f"  Modo política:     {gate}")
     print(f"  Clip: {poses_path.name}  ·  {result.n_frames} frames · {fps:.1f} fps")
+    if result.intervalo_s != (0.0, result.n_frames / max(fps, 1e-6)) or use_temporal is not False:
+        t0, t1 = result.intervalo_s
+        print(f"  Ventana pico:      {t0:.2f}s → {t1:.2f}s")
     if result.motivo and (hand_to_body or result.hand_to_body_raw):
         print(f"  Motivo geométrico:     {result.motivo}")
     print()
@@ -150,6 +153,11 @@ def main() -> None:
         action="store_true",
         help="Detalle pocket (parejas, contexto, …). Por defecto solo resumen.",
     )
+    parser.add_argument(
+        "--whole-clip",
+        action="store_true",
+        help="Sin ventanas temporales (solo un evaluación en todo el npy).",
+    )
     args = parser.parse_args()
 
     if not args.poses.is_file():
@@ -184,6 +192,7 @@ def main() -> None:
 
     interval = tuple(args.interval) if args.interval else None
     cfg = load_pocket_config(args.config) if args.config else load_pocket_config()
+    use_temporal = False if (args.whole_clip or interval is not None) else None
 
     result = evaluate_pocket_with_policy(
         poses,
@@ -197,6 +206,7 @@ def main() -> None:
         keypoint_conf=conf,
         interval_s=interval,
         config_path=args.config,
+        use_temporal=use_temporal,
     )
 
     hand_to_body = result.resultado != "INCOMPATIBLE" if args.legacy_compat else result.hand_to_body

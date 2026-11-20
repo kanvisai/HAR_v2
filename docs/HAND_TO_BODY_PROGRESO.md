@@ -15,7 +15,8 @@
 | **D** | Política v2 walk vs stop (sin categoría) | `action_policy.py` umbrales por motivo + marcha |
 | **E** | HAR1 cotidiano + resumen `har2_test` | `detect_cotidian_actions`, `htb_tier`, `accion_recomendada` |
 | **F** | **`htb_tier`**: `alert` / `review` / `none` | `action_policy.py` |
-| **G** (actual) | **`gate_mode: robbery_confirm`** — solo confirma/veta `hand_to_body` para filtro motion | `decide_robbery_confirm()`, sin cotidiano |
+| **G** | **`gate_mode: robbery_confirm`** — filtro motion + `motion_suppress` | |
+| **H** (actual) | **Ventanas 2,5 s / paso 1,25 s** en chunks ~8 s | `temporal_eval.py`, fusiona pico `hand_to_body` / `raw` |
 
 ---
 
