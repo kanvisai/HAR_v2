@@ -29,7 +29,64 @@ from har_actions.pose import fps_and_video, frame_aspect, load_poses, smooth
 from pocket_filter.config import hand_to_body_backend, load_pocket_config
 from pocket_filter.action_policy import evaluate_pocket_with_policy
 from pocket_filter.io import load_poses_array
-from pocket_filter.types import pocket_result_to_dict
+from pocket_filter.types import PocketResult, pocket_result_to_dict
+
+ACTION_LABEL_ES: dict[str, str] = {
+    "hand_to_body": "Mano al cuerpo",
+    "walk": "Caminar",
+    "stop": "Parado",
+    "arm_swing": "Balanceo de brazo",
+    "carry": "Llevar objeto",
+    "hand_up": "Mano arriba",
+    "turn_torso": "Giro de torso",
+    "inconclusive": "Sin acción clara",
+}
+
+
+def _label_action(action_id: str) -> str:
+    return ACTION_LABEL_ES.get(action_id, action_id)
+
+
+def _conf_pct(value: float) -> str:
+    return f"{max(0.0, min(1.0, value)) * 100:.0f}%"
+
+
+def _print_summary(
+    *,
+    hand_to_body: bool,
+    result: PocketResult,
+    poses_path: Path,
+    fps: float,
+) -> None:
+    action_id = result.primary_action or (
+        "hand_to_body" if hand_to_body else "inconclusive"
+    )
+    action_conf = (
+        result.primary_action_confidence
+        if result.primary_action
+        else (result.hand_to_body_confidence if hand_to_body else 0.0)
+    )
+    label = _label_action(action_id)
+    bar = "═" * 52
+    print()
+    print(bar)
+    print(f"  ACCIÓN RECOMENDADA:  {label}")
+    print(f"  Confianza:           {_conf_pct(action_conf)}  ({action_conf:.3f})")
+    print(bar)
+    print()
+    alarma = "SÍ — activar hand_to_body" if hand_to_body else "NO"
+    print(f"  Alarma hand_to_body: {alarma}")
+    if result.hand_to_body_raw is not None and bool(result.hand_to_body_raw) != hand_to_body:
+        raw_note = "sí" if result.hand_to_body_raw else "no"
+        print(
+            f"  Pocket (sin política): {raw_note}"
+            f"  · conf {_conf_pct(result.hand_to_body_confidence)}"
+            + (f"  · {result.context_veto}" if result.context_veto else "")
+        )
+    print(f"  Clip: {poses_path.name}  ·  {result.n_frames} frames · {fps:.1f} fps")
+    if result.motivo and (hand_to_body or result.hand_to_body_raw):
+        print(f"  Motivo geométrico:     {result.motivo}")
+    print()
 
 
 def _optional_npy(path: Path) -> np.ndarray | None:
@@ -78,6 +135,12 @@ def main() -> None:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--compare-legacy", action="store_true")
     parser.add_argument("--legacy-compat", action="store_true")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Detalle pocket (parejas, contexto, …). Por defecto solo resumen.",
+    )
     args = parser.parse_args()
 
     if not args.poses.is_file():
@@ -136,6 +199,17 @@ def main() -> None:
     document["poses"] = str(args.poses)
     document["hand_to_body"] = hand_to_body
     document["hand_to_body_backend_config"] = hand_to_body_backend(args.config)
+    primary = result.primary_action or (
+        "hand_to_body" if hand_to_body else "inconclusive"
+    )
+    primary_conf = (
+        result.primary_action_confidence
+        if result.primary_action
+        else (result.hand_to_body_confidence if hand_to_body else 0.0)
+    )
+    document["accion_recomendada"] = primary
+    document["accion_recomendada_es"] = _label_action(primary)
+    document["accion_confianza_pct"] = round(primary_conf * 100.0, 1)
 
     out_path = args.output or args.poses.with_name("eval_pocket_output.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,45 +219,31 @@ def main() -> None:
         print(json.dumps(document, ensure_ascii=False, indent=2))
         return
 
-    print(f"Archivo:         {args.poses}")
-    print(f"Frames:          {result.n_frames}  eval [{result.eval_start}-{result.eval_end}]  fps: {fps:.2f}")
-    print(f"Backend config:  {document['hand_to_body_backend_config']} (detect: legacy|v2)")
-    print(f"Resultado:       {result.resultado}")
-    print(f"hand_to_body:    {'sí' if hand_to_body else 'no'}")
-    print(f"confianza HTB:   {result.hand_to_body_confidence:.3f}")
-    if result.hand_to_body_raw is not None and result.hand_to_body_raw != hand_to_body:
-        print(
-            f"hand_to_body_raw:  {'sí' if result.hand_to_body_raw else 'no'}  "
-            f"(pocket COMPATIBLE sin política)"
-        )
-    if result.primary_action:
-        print(
-            f"Acción primaria: {result.primary_action}  "
-            f"(conf {result.primary_action_confidence:.3f})"
-        )
+    _print_summary(
+        hand_to_body=hand_to_body,
+        result=result,
+        poses_path=args.poses,
+        fps=fps,
+    )
+    print(f"JSON: {out_path}")
+
+    if not args.verbose:
+        return
+
+    print("── Detalle ──")
+    print(f"Backend:         {document['hand_to_body_backend_config']}")
+    print(f"Pocket:          {result.resultado}  ·  filter_fp_safe={'sí' if result.filter_fp_safe else 'no'}")
     if result.cotidian_seconds:
-        parts = [f"{k} {v:.1f}s" for k, v in sorted(result.cotidian_seconds.items())]
+        parts = [f"{_label_action(k)} {v:.1f}s" for k, v in sorted(result.cotidian_seconds.items())]
         print(f"HAR cotidiano:   {', '.join(parts)}")
-    print(f"filter_fp_safe:  {'sí' if result.filter_fp_safe else 'no'}")
-    print(f"Motivo pocket:   {result.motivo}")
-    if result.context_guard_enabled:
-        mob = gesture_seconds(detect_mobility_context(smooth(poses, window=3), fps, aspect), fps)
-        print(
-            f"Contexto clip:   walk {mob.get('walk', 0):.1f}s  "
-            f"stop {mob.get('stop', 0):.1f}s  "
-            f"(ventana gesto: walk {result.ctx_walk_frac:.0%}  "
-            f"stop {result.ctx_stop_frac:.0%}  "
-            f"manos lejos {result.ctx_hands_away_frac:.0%})"
-        )
-        if result.context_veto:
-            print(f"Context veto:    {result.context_veto}")
-    print(f"Acción:          {result.accion_propuesta}")
-    print(f"JSON:            {out_path}")
+    print(
+        f"Contexto ventana: walk {result.ctx_walk_frac:.0%}  "
+        f"stop {result.ctx_stop_frac:.0%}  "
+        f"manos lejos {result.ctx_hands_away_frac:.0%}"
+    )
     if result.best_pair:
         bp = result.best_pair
         print(f"Mejor pareja:     {bp.wrist}→bolsillo_{bp.pocket}  Δd={bp.approach_delta}")
-    if args.legacy_compat:
-        print("(legacy-compat: hand_to_body = no INCOMPATIBLE)")
     if result.pairs:
         print()
         print("Parejas:")
@@ -197,7 +257,6 @@ def main() -> None:
                     extra = f"  entrada t={p.t_entrada:.2f}  d_min={p.d_min}"
             print(f"  {tag:22} {p.verdict:14} {p.motivo}{extra}")
     if args.compare_legacy and result.legacy_hand_to_body is not None:
-        print()
         print(f"HAR legacy _hand_to_body: {'sí' if result.legacy_hand_to_body else 'no'}")
 
 
