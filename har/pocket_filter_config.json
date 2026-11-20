@@ -40,10 +40,14 @@
   },
   "action_policy": {
     "enabled": true,
-    "hand_to_body_min_confidence": 0.62,
-    "weak_motive_min_confidence": 0.72,
-    "walk_override_walk_frac": 0.42,
-    "walk_override_walk_clip_min_s": 1.0,
+    "strong_min_confidence": 0.48,
+    "approx_min_confidence": 0.56,
+    "approx_min_confidence_while_walking": 0.68,
+    "axis_min_confidence": 0.50,
+    "axis_min_confidence_while_walking": 0.66,
+    "axis_quiet_stop_frac": 0.30,
+    "walk_active_frac": 0.44,
+    "walk_active_clip_min_s": 1.0,
     "cotidian_min_visible_frac": 0.08,
     "inconclusive_below_s": 0.25
   },

@@ -1,8 +1,9 @@
 """
-Política clip: pocket (confianza) + acciones cotidianas HAR1 (walk, stop, …).
+Política clip (sin categoría): pocket + confianza + contexto walk/stop HAR1.
 
-``hand_to_body`` final = pocket COMPATIBLE y confianza ≥ umbral (más estricto en motivos débiles).
-Si no, se elige la acción cotidiana dominante del detector clásico.
+Idea: los FP de pasillo suelen ser ``ACERCAMIENTO_EJE`` **caminando**; muchos robos
+comparten el mismo motivo **parados**. Se suprime el gesto débil solo con marcha clara;
+en quieto basta confianza moderada. Motivos fuertes (bolsillo) pasan con umbral bajo.
 """
 from __future__ import annotations
 
@@ -15,26 +16,20 @@ import numpy as np
 from har_actions.detect import detect_cotidian_actions, gesture_seconds, visible_seconds
 from har_actions.pose import smooth
 from pocket_filter.confidence import pocket_hand_to_body_confidence
-
-WALK_VETO_MOTIVES = frozenset(
-    {
-        "ACERCAMIENTO_EJE_TORSO",
-        "APROXIMACION_OBSERVADA",
-        "EVIDENCIA_PARCIAL",
-        "ZONA_GRIS",
-    }
-)
-STRICT_CONF_MOTIVES = frozenset(
-    {
-        "APROXIMACION_OBSERVADA",
-        "EVIDENCIA_PARCIAL",
-        "ZONA_GRIS",
-    }
-)
 from pocket_filter.config import CONFIG_PATH, PocketConfig, load_pocket_config
 from pocket_filter.context_guard import compute_context_signals, load_context_guard_config
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.types import PocketResult
+
+STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
+APPROACH_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
+AXIS_MOTIVES = frozenset({"ACERCAMIENTO_EJE_TORSO"})
+WALK_SUPPRESS_MOTIVES = frozenset(
+    {
+        "ACERCAMIENTO_EJE_TORSO",
+        "APROXIMACION_OBSERVADA",
+    }
+)
 
 COTIDIAN_PRIMARY = (
     "walk",
@@ -49,10 +44,14 @@ COTIDIAN_PRIMARY = (
 @dataclass
 class ActionPolicyConfig:
     enabled: bool = True
-    hand_to_body_min_confidence: float = 0.62
-    weak_motive_min_confidence: float = 0.72
-    walk_override_walk_frac: float = 0.42
-    walk_override_walk_clip_min_s: float = 1.0
+    strong_min_confidence: float = 0.48
+    approx_min_confidence: float = 0.56
+    approx_min_confidence_while_walking: float = 0.68
+    axis_min_confidence: float = 0.50
+    axis_min_confidence_while_walking: float = 0.66
+    axis_quiet_stop_frac: float = 0.30
+    walk_active_frac: float = 0.44
+    walk_active_clip_min_s: float = 1.0
     cotidian_min_visible_frac: float = 0.08
     inconclusive_below_s: float = 0.25
 
@@ -65,7 +64,77 @@ def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
     block = data.get("action_policy", {})
     fields = {f.name for f in ActionPolicyConfig.__dataclass_fields__.values()}  # type: ignore
     kwargs = {k: v for k, v in block.items() if k in fields}
+    # aliases viejos → nuevos (compatibilidad config)
+    if "hand_to_body_min_confidence" in block and "axis_min_confidence" not in block:
+        kwargs.setdefault("axis_min_confidence", float(block["hand_to_body_min_confidence"]))
     return ActionPolicyConfig(**kwargs)
+
+
+def _is_walking(signals: dict[str, float], policy: ActionPolicyConfig) -> bool:
+    return (
+        signals["walk_frac"] >= policy.walk_active_frac
+        and signals["walk_s"] >= policy.walk_active_clip_min_s
+    )
+
+
+def _required_htb_confidence(
+    motivo: str,
+    *,
+    walking: bool,
+    stop_frac: float,
+    policy: ActionPolicyConfig,
+) -> float:
+    if motivo in STRONG_MOTIVES:
+        return policy.strong_min_confidence
+    if motivo in APPROACH_MOTIVES:
+        if walking:
+            return policy.approx_min_confidence_while_walking
+        return policy.approx_min_confidence
+    if motivo in AXIS_MOTIVES:
+        if walking:
+            return policy.axis_min_confidence_while_walking
+        if stop_frac >= policy.axis_quiet_stop_frac:
+            return policy.axis_min_confidence
+        return policy.axis_min_confidence + 0.06
+    return 0.62
+
+
+def decide_hand_to_body(
+    *,
+    pocket_compatible: bool,
+    conf: float,
+    motivo: str,
+    signals: dict[str, float],
+    policy: ActionPolicyConfig,
+) -> tuple[bool, str | None]:
+    """
+    Decisión final sin categoría. Devuelve (hand_to_body, veto_code).
+    """
+    if not pocket_compatible:
+        return False, None
+
+    walking = _is_walking(signals, policy)
+    need = _required_htb_confidence(
+        motivo,
+        walking=walking,
+        stop_frac=signals["stop_frac"],
+        policy=policy,
+    )
+
+    if conf >= need:
+        return True, None
+
+    if (
+        motivo in WALK_SUPPRESS_MOTIVES
+        and walking
+        and conf < need
+    ):
+        return False, "POLICY_WALK_OVER_WEAK_POCKET"
+
+    if conf >= need - 0.04 and motivo in AXIS_MOTIVES and not walking:
+        return True, None
+
+    return False, "POLICY_LOW_CONFIDENCE" if conf < need else None
 
 
 def _cotidian_durations(
@@ -93,10 +162,10 @@ def _best_cotidian(
         dur = seconds.get(aid, 0.0)
         if dur <= 0:
             continue
-        conf = min(1.0, dur / visible)
-        if conf >= min_frac and conf > best_conf:
+        c = min(1.0, dur / visible)
+        if c >= min_frac and c > best_conf:
             best_id = aid
-            best_conf = conf
+            best_conf = c
     return best_id, round(best_conf, 4)
 
 
@@ -110,7 +179,6 @@ def apply_action_policy(
     policy: ActionPolicyConfig | None = None,
     config_path: Path | None = None,
 ) -> PocketResult:
-    """Rellena confianza, acción primaria y ajusta ``hand_to_body`` si policy enabled."""
     pocket_cfg = pocket_cfg or load_pocket_config(config_path)
     policy = policy or load_action_policy_config(config_path)
 
@@ -122,15 +190,15 @@ def apply_action_policy(
     result.cotidian_seconds = {k: round(v, 3) for k, v in seconds.items() if v > 0}
 
     if not policy.enabled:
-        result.primary_action = "hand_to_body" if result.hand_to_body else _best_cotidian(
-            seconds, visible, min_frac=policy.cotidian_min_visible_frac
-        )[0]
+        result.primary_action = (
+            "hand_to_body"
+            if result.hand_to_body
+            else _best_cotidian(
+                seconds, visible, min_frac=policy.cotidian_min_visible_frac
+            )[0]
+        )
         result.primary_action_confidence = conf if result.hand_to_body else 0.0
         return result
-
-    min_conf = policy.hand_to_body_min_confidence
-    if result.motivo in STRICT_CONF_MOTIVES:
-        min_conf = max(min_conf, policy.weak_motive_min_confidence)
 
     gcfg = load_context_guard_config(config_path)
     window = (result.eval_start, result.eval_end)
@@ -144,29 +212,28 @@ def apply_action_policy(
     result.ctx_stop_s = signals["stop_s"]
 
     raw = bool(result.hand_to_body_raw)
-    accept_htb = raw and conf >= min_conf
-
-    walk_veto = (
-        raw
-        and not accept_htb
-        and result.motivo in WALK_VETO_MOTIVES
-        and signals["walk_frac"] >= policy.walk_override_walk_frac
-        and signals["walk_s"] >= policy.walk_override_walk_clip_min_s
+    accept, veto = decide_hand_to_body(
+        pocket_compatible=raw,
+        conf=conf,
+        motivo=result.motivo,
+        signals=signals,
+        policy=policy,
     )
+    result.context_veto = veto
 
-    if accept_htb:
+    if accept:
         result.hand_to_body = True
         result.primary_action = "hand_to_body"
         result.primary_action_confidence = conf
-        result.context_veto = None
         return result
 
     result.hand_to_body = False
-    if walk_veto:
-        result.context_veto = "POLICY_WALK_OVER_WEAK_POCKET"
+    if veto == "POLICY_WALK_OVER_WEAK_POCKET":
         walk_conf = min(1.0, seconds.get("walk", 0.0) / visible)
         result.primary_action = "walk"
-        result.primary_action_confidence = round(max(walk_conf, signals["walk_frac"]), 4)
+        result.primary_action_confidence = round(
+            max(walk_conf, signals["walk_frac"]), 4
+        )
         return result
 
     cot_id, cot_conf = _best_cotidian(
@@ -175,12 +242,8 @@ def apply_action_policy(
     if cot_id == "inconclusive" and seconds.get("stop", 0) >= policy.inconclusive_below_s:
         cot_id = "stop"
         cot_conf = round(min(1.0, seconds["stop"] / visible), 4)
-
     result.primary_action = cot_id
     result.primary_action_confidence = cot_conf
-    result.context_veto = (
-        "POLICY_LOW_CONFIDENCE" if raw and conf < min_conf else None
-    )
     return result
 
 

@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from pocket_filter.action_policy import apply_action_policy, load_action_policy_config
+from pocket_filter.action_policy import (
+    apply_action_policy,
+    decide_hand_to_body,
+    load_action_policy_config,
+)
 from pocket_filter.confidence import pocket_hand_to_body_confidence
 from pocket_filter.evaluate import evaluate_pocket
 
@@ -45,7 +49,43 @@ def test_policy_keeps_strong_compatible():
     out = apply_action_policy(result, poses, fps=12.0, aspect=1.0, policy=policy)
     assert out.hand_to_body
     assert out.primary_action == "hand_to_body"
-    assert out.hand_to_body_confidence >= policy.hand_to_body_min_confidence
+    assert out.hand_to_body_confidence >= policy.strong_min_confidence
+
+
+def test_walking_weak_axis_rejected_stationary_ok():
+    policy = load_action_policy_config()
+    walking = {
+        "walk_frac": 0.55,
+        "walk_s": 2.0,
+        "stop_frac": 0.1,
+        "stop_s": 0.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    quiet = {
+        "walk_frac": 0.1,
+        "walk_s": 0.2,
+        "stop_frac": 0.6,
+        "stop_s": 3.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, veto = decide_hand_to_body(
+        pocket_compatible=True,
+        conf=0.58,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=quiet,
+        policy=policy,
+    )
+    assert ok and veto is None
+    ok2, veto2 = decide_hand_to_body(
+        pocket_compatible=True,
+        conf=0.58,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=walking,
+        policy=policy,
+    )
+    assert not ok2 and veto2 == "POLICY_WALK_OVER_WEAK_POCKET"
 
 
 def test_incompatible_yields_low_confidence():
