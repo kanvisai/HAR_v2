@@ -10,6 +10,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --csv /tmp/informe.csv --workers 20
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10 --csv /tmp/debug_muestra.csv
+  .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --debug 20 --csv /tmp/legacy.csv
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ if str(ROOT) not in sys.path:
 
 from har_actions.pose import fps_and_video, frame_aspect, load_poses
 from pocket_filter.config import load_pocket_config
+from legacy_hand_to_body import evaluate_legacy
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.io import load_poses_array
 
@@ -48,6 +50,7 @@ CSV_FIELDS = [
     "data_root",
     "path",
     "category",
+    "backend",
     "elapsed_s",
     "hand_to_body",
     "resultado",
@@ -250,6 +253,7 @@ def evaluate_one_clip(
     poses_path: Path,
     category: int,
     *,
+    backend: str,
     config_path: str | None,
     default_height: float,
 ) -> dict[str, Any]:
@@ -258,6 +262,7 @@ def evaluate_one_clip(
         "data_root": "",
         "path": str(poses_path),
         "category": category,
+        "backend": backend,
         "error": "",
     }
     try:
@@ -271,43 +276,71 @@ def evaluate_one_clip(
         aspect = frame_aspect(video)
         frame_h = default_height
         row_mask, timestamps = _load_aux(poses_path)
-        cfg = load_pocket_config(Path(config_path)) if config_path else load_pocket_config()
 
-        result = evaluate_pocket(
-            poses,
-            fps=fps,
-            aspect=aspect,
-            frame_height=frame_h,
-            timestamps=timestamps,
-            row_mask=row_mask,
-            keypoint_conf=conf,
-            config=cfg,
-        )
-        ht = bool(result.hand_to_body)
-        exp_s, match_s, audit = audit_row(category, ht)
-        row.update(
-            {
-                "elapsed_s": round(time.perf_counter() - t0, 4),
-                "hand_to_body": ht,
-                "resultado": result.resultado,
-                "filter_fp_safe": bool(result.filter_fp_safe),
-                "motivo": result.motivo,
-                "n_frames": int(result.n_frames),
-                "expected_hand_to_body": exp_s,
-                "label_match": match_s,
-                "audit_class": audit,
-                "hand_to_body_raw": ht,
-                "context_veto": result.context_veto or "",
-                "ctx_walk_frac": round(result.ctx_walk_frac, 4),
-                "ctx_stop_frac": round(result.ctx_stop_frac, 4),
-                "ctx_hands_away_frac": round(result.ctx_hands_away_frac, 4),
-                "ctx_walk_s": round(result.ctx_walk_s, 3),
-            }
-        )
+        if backend == "legacy":
+            leg = evaluate_legacy(poses, fps=fps, aspect=aspect)
+            ht = bool(leg.hand_to_body)
+            exp_s, match_s, audit = audit_row(category, ht)
+            motivo = "LEGACY_HAND_TO_BODY" if ht else "LEGACY_NO_GESTURE"
+            if ht and leg.detail:
+                motivo = f"{motivo}|{leg.detail[:80]}"
+            row.update(
+                {
+                    "elapsed_s": round(time.perf_counter() - t0, 4),
+                    "hand_to_body": ht,
+                    "resultado": "LEGACY_HIT" if ht else "LEGACY_NONE",
+                    "filter_fp_safe": "",
+                    "motivo": motivo,
+                    "n_frames": int(leg.n_frames),
+                    "expected_hand_to_body": exp_s,
+                    "label_match": match_s,
+                    "audit_class": audit,
+                    "hand_to_body_raw": ht,
+                    "context_veto": "",
+                    "ctx_walk_frac": "",
+                    "ctx_stop_frac": "",
+                    "ctx_hands_away_frac": "",
+                    "ctx_walk_s": "",
+                }
+            )
+        else:
+            cfg = load_pocket_config(Path(config_path)) if config_path else load_pocket_config()
+            result = evaluate_pocket(
+                poses,
+                fps=fps,
+                aspect=aspect,
+                frame_height=frame_h,
+                timestamps=timestamps,
+                row_mask=row_mask,
+                keypoint_conf=conf,
+                config=cfg,
+            )
+            ht = bool(result.hand_to_body)
+            exp_s, match_s, audit = audit_row(category, ht)
+            row.update(
+                {
+                    "elapsed_s": round(time.perf_counter() - t0, 4),
+                    "hand_to_body": ht,
+                    "resultado": result.resultado,
+                    "filter_fp_safe": bool(result.filter_fp_safe),
+                    "motivo": result.motivo,
+                    "n_frames": int(result.n_frames),
+                    "expected_hand_to_body": exp_s,
+                    "label_match": match_s,
+                    "audit_class": audit,
+                    "hand_to_body_raw": ht,
+                    "context_veto": result.context_veto or "",
+                    "ctx_walk_frac": round(result.ctx_walk_frac, 4),
+                    "ctx_stop_frac": round(result.ctx_stop_frac, 4),
+                    "ctx_hands_away_frac": round(result.ctx_hands_away_frac, 4),
+                    "ctx_walk_s": round(result.ctx_walk_s, 3),
+                }
+            )
     except Exception as exc:
         row.update(
             {
                 "elapsed_s": round(time.perf_counter() - t0, 4),
+                "backend": backend,
                 "hand_to_body": "",
                 "resultado": "",
                 "filter_fp_safe": "",
@@ -328,9 +361,11 @@ def evaluate_one_clip(
     return row
 
 
-def _worker(task: tuple[str, int, str, str | None, float]) -> dict[str, Any]:
-    path_s, cat, data_root_s, cfg, height = task
-    row = evaluate_one_clip(Path(path_s), cat, config_path=cfg, default_height=height)
+def _worker(task: tuple[str, int, str, str, str | None, float]) -> dict[str, Any]:
+    path_s, cat, data_root_s, backend, cfg, height = task
+    row = evaluate_one_clip(
+        Path(path_s), cat, backend=backend, config_path=cfg, default_height=height
+    )
     row["data_root"] = data_root_s
     return row
 
@@ -366,6 +401,7 @@ def preflight_report(
     clips: list[ClipRef],
     data_roots: list[Path],
     *,
+    backend: str,
     scan_seconds: float,
     workers: int,
     sample_size: int,
@@ -373,7 +409,7 @@ def preflight_report(
     default_height: float,
 ) -> None:
     t_preflight0 = time.perf_counter()
-    print("=== PREFLIGHT pocket v2 / data_result ===\n", flush=True)
+    print(f"=== PREFLIGHT data_result | backend={backend} ===\n", flush=True)
     print(
         f"Nota: el escaneo de disco (buscar poses_full.npy) ya consumió "
         f"{scan_seconds / 60:.1f} min; el batch completo lo repetirá una vez al inicio.\n",
@@ -432,6 +468,7 @@ def preflight_report(
     t_bench0 = time.perf_counter()
     bench_rows = run_batch(
         sample,
+        backend=backend,
         workers=bench_workers,
         config_path=config_path,
         default_height=default_height,
@@ -493,6 +530,7 @@ def preflight_report(
 def run_batch(
     clips: list[ClipRef],
     *,
+    backend: str,
     workers: int,
     config_path: str | None,
     default_height: float,
@@ -501,7 +539,7 @@ def run_batch(
     phase_label: str = "EVAL",
 ) -> list[dict[str, Any]]:
     tasks = [
-        (str(c.path), c.category, str(c.data_root.resolve()), config_path, default_height)
+        (str(c.path), c.category, str(c.data_root.resolve()), backend, config_path, default_height)
         for c in clips
     ]
     rows: list[dict[str, Any]] = []
@@ -689,6 +727,12 @@ def main() -> None:
         help="Clips de muestra para timing en --preflight",
     )
     parser.add_argument("--config", type=Path, default=None, help="pocket_filter_config.json")
+    parser.add_argument(
+        "--backend",
+        choices=("v2", "legacy"),
+        default="v2",
+        help="v2 = pocket_filter (har2_test); legacy = HAR pasillo original (_hand_to_body)",
+    )
     parser.add_argument("--height", type=float, default=1080.0)
     parser.add_argument("--seed", type=int, default=42, help="Semilla para muestras aleatorias")
     parser.add_argument(
@@ -721,7 +765,10 @@ def main() -> None:
 
     mode = "preflight" if args.preflight and args.debug <= 0 else ("debug" if args.debug > 0 else "batch")
     roots_banner = ", ".join(str(r) for r in args.data_roots)
-    print(f"\n>>> batch_data_result | modo={mode} | raíces: {roots_banner}\n", flush=True)
+    print(
+        f"\n>>> batch_data_result | modo={mode} | backend={args.backend} | raíces: {roots_banner}\n",
+        flush=True,
+    )
 
     discovered = discover_clips(
         args.data_roots,
@@ -738,6 +785,7 @@ def main() -> None:
         preflight_report(
             clips,
             args.data_roots,
+            backend=args.backend,
             scan_seconds=scan_s,
             workers=args.workers,
             sample_size=args.sample,
@@ -759,6 +807,7 @@ def main() -> None:
         print(flush=True)
         rows = run_batch(
             subset,
+            backend=args.backend,
             workers=min(args.workers, n),
             config_path=cfg_path,
             default_height=args.height,
@@ -786,6 +835,7 @@ def main() -> None:
     t0 = time.perf_counter()
     rows = run_batch(
         clips,
+        backend=args.backend,
         workers=args.workers,
         config_path=cfg_path,
         default_height=args.height,
