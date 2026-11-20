@@ -141,5 +141,14 @@ def seen_pose(pose: np.ndarray) -> np.ndarray:
     return np.array(pose, dtype=np.float64, copy=True)
 
 
-EXAMPLE_POSES = sorted(VIDEOS.glob("0/*/user_*/poses_full.npy"))[0]
-EXAMPLE_VIDEO = clip_directory(EXAMPLE_POSES) / "clip.mp4"
+def _first_example_poses() -> Path | None:
+    if not VIDEOS.is_dir():
+        return None
+    found = sorted(VIDEOS.glob("0/*/user_*/poses_full.npy"))
+    return found[0] if found else None
+
+
+EXAMPLE_POSES = _first_example_poses()
+EXAMPLE_VIDEO = (
+    clip_directory(EXAMPLE_POSES) / "clip.mp4" if EXAMPLE_POSES is not None else None
+)
