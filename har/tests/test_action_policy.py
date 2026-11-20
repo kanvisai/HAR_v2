@@ -88,6 +88,29 @@ def test_walking_weak_axis_rejected_stationary_ok():
     assert not ok2 and veto2 == "POLICY_WALK_OVER_WEAK_POCKET"
 
 
+def test_axis_compatible_goes_review_tier_not_alert():
+    T = 12
+    poses = np.stack(
+        [
+            _skeleton_frame(0.72 - 0.35 * (t / (T - 1)), 0.70 - 0.12 * (t / (T - 1)))
+            for t in range(T)
+        ]
+    )
+    from pocket_filter.evaluate import evaluate_pocket
+
+    result = evaluate_pocket(poses, fps=12.0, aspect=1.0, frame_height=720.0)
+    if result.best_pair:
+        result.motivo = "ACERCAMIENTO_EJE_TORSO"
+        result.hand_to_body = True
+        result.hand_to_body_raw = True
+    policy = load_action_policy_config()
+    out = apply_action_policy(result, poses, fps=12.0, aspect=1.0, policy=policy)
+    if result.motivo == "ACERCAMIENTO_EJE_TORSO" and bool(result.hand_to_body_raw):
+        assert out.htb_tier in ("review", "alert")
+    else:
+        assert out.htb_tier in ("alert", "none", "review")
+
+
 def test_incompatible_yields_low_confidence():
     pose = np.full((8, 2), np.nan)
     pose[0] = [0.40, 0.22]

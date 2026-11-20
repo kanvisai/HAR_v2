@@ -75,6 +75,10 @@ def _print_summary(
     print(bar)
     print()
     alarma = "SÍ — activar hand_to_body" if hand_to_body else "NO"
+    tier_es = {"alert": "Alarma", "review": "Revisión", "none": "Ninguna"}.get(
+        result.htb_tier, result.htb_tier
+    )
+    print(f"  Nivel HTB:           {tier_es} ({result.htb_tier})")
     print(f"  Alarma hand_to_body: {alarma}")
     if result.hand_to_body_raw is not None and bool(result.hand_to_body_raw) != hand_to_body:
         raw_note = "sí" if result.hand_to_body_raw else "no"
@@ -210,6 +214,7 @@ def main() -> None:
     document["accion_recomendada"] = primary
     document["accion_recomendada_es"] = _label_action(primary)
     document["accion_confianza_pct"] = round(primary_conf * 100.0, 1)
+    document["htb_tier"] = result.htb_tier
 
     out_path = args.output or args.poses.with_name("eval_pocket_output.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)

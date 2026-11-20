@@ -3,6 +3,7 @@
 **Audiencia:** agente de implementación, calibración y optimización (handoff a agente potente).  
 **Alcance:** diseño, comparación de soluciones, **estado de la implementación prototipo nov 2026**, y preguntas abiertas.  
 **Última actualización del handoff:** 2026-03-20 (tras primer prototipo `pocket_filter` + `har2_test.py`).  
+**Diario de calibración (métricas, rollback, comandos):** [`HAND_TO_BODY_PROGRESO.md`](HAND_TO_BODY_PROGRESO.md).  
 **Fuentes:**
 
 - Spec: `KANVIS_Filtro_Ignacio_Especificacion.docx` (v1.0, filtro determinista de trayectorias hacia el bolsillo).

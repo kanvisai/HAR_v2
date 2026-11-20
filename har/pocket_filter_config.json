@@ -49,7 +49,10 @@
     "walk_active_frac": 0.44,
     "walk_active_clip_min_s": 1.0,
     "cotidian_min_visible_frac": 0.08,
-    "inconclusive_below_s": 0.25
+    "inconclusive_below_s": 0.25,
+    "axis_max_tier": "review",
+    "review_min_confidence": 0.48,
+    "review_axis_min_confidence": 0.52
   },
   "context_guard": {
     "enabled": false,

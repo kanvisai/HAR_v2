@@ -54,6 +54,9 @@ class ActionPolicyConfig:
     walk_active_clip_min_s: float = 1.0
     cotidian_min_visible_frac: float = 0.08
     inconclusive_below_s: float = 0.25
+    axis_max_tier: str = "review"
+    review_min_confidence: float = 0.48
+    review_axis_min_confidence: float = 0.52
 
 
 def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
@@ -169,6 +172,23 @@ def _best_cotidian(
     return best_id, round(best_conf, 4)
 
 
+def _qualifies_review(
+    *,
+    raw: bool,
+    conf: float,
+    motivo: str,
+    veto: str | None,
+    policy: ActionPolicyConfig,
+) -> bool:
+    if not raw or veto == "POLICY_WALK_OVER_WEAK_POCKET":
+        return False
+    if motivo in AXIS_MOTIVES:
+        return conf >= policy.review_axis_min_confidence
+    if motivo in STRONG_MOTIVES | APPROACH_MOTIVES:
+        return conf >= policy.review_min_confidence
+    return conf >= policy.review_min_confidence
+
+
 def apply_action_policy(
     result: PocketResult,
     poses: np.ndarray,
@@ -198,6 +218,7 @@ def apply_action_policy(
             )[0]
         )
         result.primary_action_confidence = conf if result.hand_to_body else 0.0
+        result.htb_tier = "alert" if result.hand_to_body else "none"
         return result
 
     gcfg = load_context_guard_config(config_path)
@@ -221,13 +242,33 @@ def apply_action_policy(
     )
     result.context_veto = veto
 
-    if accept:
+    axis_cap = (
+        accept
+        and result.motivo in AXIS_MOTIVES
+        and policy.axis_max_tier == "review"
+    )
+
+    if accept and not axis_cap:
         result.hand_to_body = True
+        result.htb_tier = "alert"
         result.primary_action = "hand_to_body"
         result.primary_action_confidence = conf
         return result
 
     result.hand_to_body = False
+
+    if axis_cap or _qualifies_review(
+        raw=raw, conf=conf, motivo=result.motivo, veto=veto, policy=policy
+    ):
+        result.htb_tier = "review"
+        result.primary_action = "hand_to_body"
+        result.primary_action_confidence = conf
+        if axis_cap:
+            result.context_veto = result.context_veto or "TIER_AXIS_REVIEW_ONLY"
+        return result
+
+    result.htb_tier = "none"
+
     if veto == "POLICY_WALK_OVER_WEAK_POCKET":
         walk_conf = min(1.0, seconds.get("walk", 0.0) / visible)
         result.primary_action = "walk"

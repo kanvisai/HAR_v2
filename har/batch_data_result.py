@@ -71,6 +71,7 @@ CSV_FIELDS = [
     "hand_to_body_confidence",
     "primary_action",
     "primary_action_confidence",
+    "htb_tier",
     "error",
 ]
 
@@ -318,6 +319,7 @@ def evaluate_one_clip(
                     "hand_to_body_confidence": "",
                     "primary_action": "",
                     "primary_action_confidence": "",
+                    "htb_tier": "",
                 }
             )
         else:
@@ -359,6 +361,7 @@ def evaluate_one_clip(
                     "primary_action_confidence": round(
                         result.primary_action_confidence, 4
                     ),
+                    "htb_tier": result.htb_tier,
                 }
             )
     except Exception as exc:
@@ -383,6 +386,7 @@ def evaluate_one_clip(
                 "hand_to_body_confidence": "",
                 "primary_action": "",
                 "primary_action_confidence": "",
+                "htb_tier": "",
                 "error": str(exc),
             }
         )

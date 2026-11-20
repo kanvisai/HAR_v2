@@ -6,6 +6,7 @@ from typing import Any, Literal
 WristId = Literal["left", "right"]
 PocketId = Literal["left", "right"]
 Verdict = Literal["COMPATIBLE", "INCOMPATIBLE", "INDETERMINADO"]
+HtbTier = Literal["none", "review", "alert"]
 
 
 @dataclass
@@ -52,6 +53,7 @@ class PocketResult:
     primary_action: str = ""
     primary_action_confidence: float = 0.0
     cotidian_seconds: dict[str, float] = field(default_factory=dict)
+    htb_tier: HtbTier = "none"
 
     @property
     def accion_propuesta(self) -> str:
