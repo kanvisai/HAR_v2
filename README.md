@@ -100,6 +100,16 @@ cd har
 .venv/bin/python -m pytest tests/test_pocket_filter.py
 ```
 
+### Barrido `data_result` (batch por categoría)
+
+```bash
+.venv/bin/python3 batch_data_result.py /path/data_result --preflight --workers 20
+.venv/bin/python3 batch_data_result.py /path/data_result -o informe.csv --workers 20
+.venv/bin/python3 batch_data_result.py /path/data_result --debug 10
+```
+
+El CSV incluye auditoría TP/TN/FP/FN según expectativa por categoría (6 y 14 → `hand_to_body` esperado; 0–5, 7, 9, 13 → no).
+
 - `hand_to_body: sí` = **COMPATIBLE**; `filter_fp_safe: sí` = **INCOMPATIBLE** (único descarte FP fuerte).
 - Config: `har/pocket_filter_config.json` — por defecto `hand_to_body_backend`: **`v2`** (algoritmo nuevo; `legacy` = regla antigua).
 - Salida: `eval_pocket_output.json` junto al npy (`har2_test` siempre; `detect_json` si backend es `v2`).
