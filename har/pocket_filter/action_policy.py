@@ -188,6 +188,28 @@ def decide_robbery_confirm(
     return False, "GATE_WEAK_MOTIVO"
 
 
+def decide_motion_suppress(
+    *,
+    pocket_compatible: bool,
+    hand_to_body_clear: bool,
+    motivo: str,
+    signals: dict[str, float],
+    policy: ActionPolicyConfig,
+) -> tuple[bool, str | None]:
+    """
+    ¿Suprimir alarma del modelo de robo?
+    Sí solo si no hay gesto en pocket o es FP típico (gesto débil + marcha).
+    Si hay pocket compatible en quieto aunque no sea ‘claro’, no suprimir (recall robos).
+    """
+    if not pocket_compatible:
+        return True, "SUPPRESS_NO_POCKET"
+    if hand_to_body_clear:
+        return False, None
+    if _is_walking(signals, policy) and motivo in WALK_SUPPRESS_MOTIVES:
+        return True, "SUPPRESS_WALK_WEAK_GESTURE"
+    return False, None
+
+
 def _cotidian_durations(
     poses: np.ndarray,
     *,
@@ -259,6 +281,8 @@ def apply_action_policy(
         result.htb_tier = "alert" if result.hand_to_body else "none"
         result.primary_action = "hand_to_body" if result.hand_to_body else "no_gesture"
         result.primary_action_confidence = conf if result.hand_to_body else 0.0
+        raw0 = bool(result.hand_to_body_raw)
+        result.motion_suppress = not raw0
         return result
 
     gcfg = load_context_guard_config(config_path)
@@ -288,6 +312,14 @@ def apply_action_policy(
         result.primary_action = "hand_to_body" if accept else "no_gesture"
         result.primary_action_confidence = conf if accept else 0.0
         result.cotidian_seconds = {}
+        sup, _ = decide_motion_suppress(
+            pocket_compatible=raw,
+            hand_to_body_clear=accept,
+            motivo=result.motivo,
+            signals=signals,
+            policy=policy,
+        )
+        result.motion_suppress = sup
         return result
 
     seconds, visible = _cotidian_durations(poses, fps=fps, aspect=aspect)
@@ -308,11 +340,24 @@ def apply_action_policy(
         and policy.axis_max_tier == "review"
     )
 
+    def _attach_motion_suppress() -> None:
+        sup, code = decide_motion_suppress(
+            pocket_compatible=raw,
+            hand_to_body_clear=bool(result.hand_to_body),
+            motivo=result.motivo,
+            signals=signals,
+            policy=policy,
+        )
+        result.motion_suppress = sup
+        if code and not result.context_veto:
+            result.context_veto = code
+
     if accept and not axis_cap:
         result.hand_to_body = True
         result.htb_tier = "alert"
         result.primary_action = "hand_to_body"
         result.primary_action_confidence = conf
+        _attach_motion_suppress()
         return result
 
     result.hand_to_body = False
@@ -325,6 +370,7 @@ def apply_action_policy(
         result.primary_action_confidence = conf
         if axis_cap:
             result.context_veto = result.context_veto or "TIER_AXIS_REVIEW_ONLY"
+        _attach_motion_suppress()
         return result
 
     result.htb_tier = "none"
@@ -335,6 +381,7 @@ def apply_action_policy(
         result.primary_action_confidence = round(
             max(walk_conf, signals["walk_frac"]), 4
         )
+        _attach_motion_suppress()
         return result
 
     cot_id, cot_conf = _best_cotidian(
@@ -345,6 +392,7 @@ def apply_action_policy(
         cot_conf = round(min(1.0, seconds["stop"] / visible), 4)
     result.primary_action = cot_id
     result.primary_action_confidence = cot_conf
+    _attach_motion_suppress()
     return result
 
 

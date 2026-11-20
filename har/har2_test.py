@@ -80,6 +80,8 @@ def _print_summary(
     )
     print(f"  Nivel HTB:           {tier_es} ({result.htb_tier})")
     print(f"  Alarma hand_to_body: {alarma}")
+    sup = "SÍ — frenar candidato motion" if result.motion_suppress else "NO"
+    print(f"  Frenar motion:       {sup}")
     if result.hand_to_body_raw is not None and bool(result.hand_to_body_raw) != hand_to_body:
         raw_note = "sí" if result.hand_to_body_raw else "no"
         print(

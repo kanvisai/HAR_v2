@@ -62,7 +62,19 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 - **Confirmar** (`hand_to_body=true`): `CONTACTO`; `APROXIMACION` solo sin marcha; `EJE` solo parado (`stop_frac`) y confianza.
 - **Nunca confirmar** aprox/eje **caminando**; contacto caminando exige conf ≥ `gate_contact_min_confidence_while_walking`.
 - **`hand_to_body_raw`**: pocket COMPATIBLE (auditoría).
-- Integración motion: `if candidato_robo and hand_to_body → seguir; else → suprimir FP`.
+- Integración motion (recomendada):
+  ```text
+  if modelo_robo:
+      if motion_suppress:  # sin pocket o caminando + gesto débil
+          descartar FP
+      elif hand_to_body:  # gesto claro
+          escalar
+      elif hand_to_body_raw:  # hay gesto, no tan claro
+          SAM / revisión (recall cat 6)
+      else:
+          descartar
+  ```
+- **Un solo boolean no alcanza** ~3957 TP en 6 y ~164 FP en 0: usar `hand_to_body` (claro) + `hand_to_body_raw` (pocket) + `motion_suppress`.
 
 ## Contrato de salida (producción sin categoría)
 

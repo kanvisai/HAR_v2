@@ -72,6 +72,7 @@ CSV_FIELDS = [
     "primary_action",
     "primary_action_confidence",
     "htb_tier",
+    "motion_suppress",
     "error",
 ]
 
@@ -320,6 +321,7 @@ def evaluate_one_clip(
                     "primary_action": "",
                     "primary_action_confidence": "",
                     "htb_tier": "",
+                    "motion_suppress": "",
                 }
             )
         else:
@@ -362,6 +364,7 @@ def evaluate_one_clip(
                         result.primary_action_confidence, 4
                     ),
                     "htb_tier": result.htb_tier,
+                    "motion_suppress": bool(result.motion_suppress),
                 }
             )
     except Exception as exc:
@@ -387,6 +390,7 @@ def evaluate_one_clip(
                 "primary_action": "",
                 "primary_action_confidence": "",
                 "htb_tier": "",
+                "motion_suppress": "",
                 "error": str(exc),
             }
         )

@@ -54,6 +54,8 @@ class PocketResult:
     primary_action_confidence: float = 0.0
     cotidian_seconds: dict[str, float] = field(default_factory=dict)
     htb_tier: HtbTier = "none"
+    """Frenar candidato del modelo de robo (FP): sin pocket o pasillo caminando débil."""
+    motion_suppress: bool = False
 
     @property
     def accion_propuesta(self) -> str:

@@ -7,6 +7,7 @@ from pocket_filter.action_policy import (
     ActionPolicyConfig,
     apply_action_policy,
     decide_hand_to_body,
+    decide_motion_suppress,
     decide_robbery_confirm,
     load_action_policy_config,
 )
@@ -115,6 +116,45 @@ def test_robbery_confirm_blocks_approx_while_walking():
     )
     assert not ok
     assert veto == "GATE_WALK_NO_CONFIRM"
+
+
+def test_motion_suppress_quiet_raw_not_clear():
+    policy = ActionPolicyConfig(gate_mode="robbery_confirm")
+    quiet = {
+        "walk_frac": 0.1,
+        "walk_s": 0.2,
+        "stop_frac": 0.5,
+        "stop_s": 3.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    sup, _ = decide_motion_suppress(
+        pocket_compatible=True,
+        hand_to_body_clear=False,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=quiet,
+        policy=policy,
+    )
+    assert not sup
+
+
+def test_motion_suppress_no_pocket():
+    policy = ActionPolicyConfig()
+    sup, code = decide_motion_suppress(
+        pocket_compatible=False,
+        hand_to_body_clear=False,
+        motivo="",
+        signals={
+            "walk_frac": 0.0,
+            "walk_s": 0.0,
+            "stop_frac": 1.0,
+            "stop_s": 1.0,
+            "hands_away_frac": 0.0,
+            "hands_away_s": 0.0,
+        },
+        policy=policy,
+    )
+    assert sup and code == "SUPPRESS_NO_POCKET"
 
 
 def test_robbery_confirm_allows_axis_when_quiet():
