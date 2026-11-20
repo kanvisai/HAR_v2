@@ -11,6 +11,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10 --csv /tmp/debug_muestra.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --debug 20 --csv /tmp/legacy.csv
+  .venv/bin/python3 batch_data_result.py /path/data_result --category 6 --backend v2 -o cat6_v2.csv
 """
 from __future__ import annotations
 
@@ -121,6 +122,15 @@ def _scan_one_data_root(root: Path, *, verbose: bool, heartbeat: bool) -> list[C
     if verbose or heartbeat:
         print(f"   Subtotal en esta raíz: {len(found)} clips\n", flush=True)
     return found
+
+
+def filter_clips_by_category(
+    clips: list[ClipRef],
+    categories: set[int] | frozenset[int],
+) -> list[ClipRef]:
+    if not categories:
+        return clips
+    return [c for c in clips if c.category in categories]
 
 
 def discover_clips(
@@ -751,6 +761,15 @@ def main() -> None:
         default=0,
         help="Imprimir progreso cada N clips (0 = automático)",
     )
+    parser.add_argument(
+        "-c",
+        "--category",
+        type=int,
+        nargs="+",
+        metavar="N",
+        default=None,
+        help="Solo estas categorías (p. ej. -c 6 o -c 6 14). Escaneo completo; evalúa solo el subconjunto.",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -777,6 +796,22 @@ def main() -> None:
     )
     clips = discovered.clips
     scan_s = discovered.scan_seconds
+
+    if args.category is not None:
+        allowed = frozenset(args.category)
+        before = len(clips)
+        clips = filter_clips_by_category(clips, allowed)
+        print(
+            f"Filtro categorías {sorted(allowed)}: {len(clips)} clips a evaluar "
+            f"(de {before} en inventario completo)",
+            flush=True,
+        )
+        if clips:
+            by_f = Counter(c.category for c in clips)
+            for cat in sorted(by_f):
+                print(f"  cat {cat:2d}: {by_f[cat]}", flush=True)
+        print(flush=True)
+
     if not clips and not args.preflight:
         roots_s = ", ".join(str(r) for r in args.data_roots)
         raise SystemExit(f"No se encontraron poses_full.npy bajo user_* en: {roots_s}")

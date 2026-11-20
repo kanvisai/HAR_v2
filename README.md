@@ -106,6 +106,7 @@ cd har
 .venv/bin/python3 batch_data_result.py /path/data_result --preflight --workers 20
 .venv/bin/python3 batch_data_result.py /path/data_result --csv /ruta/informe_pocket.csv --workers 20
 .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --csv /tmp/legacy.csv --workers 20
+.venv/bin/python3 batch_data_result.py /path/data_result --category 6 --csv cat6_audit.csv --workers 20
 .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
 ```
 
