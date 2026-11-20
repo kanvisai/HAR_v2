@@ -89,15 +89,20 @@ On Debian or Ubuntu that file comes from the `fonts-dejavu-core` package.
 
 Run the programs with `.venv/bin/python3`.
 
-### Filtro Ignacio (hand_to_body v2, prueba)
+### Filtro pocket (hand_to_body v2)
 
 ```bash
 cd har
 .venv/bin/python3 har2_test.py /path/to/poses_full.npy
 .venv/bin/python3 har2_test.py /path/to/poses_full.npy --json --compare-legacy
+.venv/bin/python3 har2_test.py /path/to/poses_full.npy --interval 2.0 6.0
+.venv/bin/visualize_pocket.py /path/to/poses_full.npy --save-series temp_output/d_series.json
+.venv/bin/python -m pytest tests/test_pocket_filter.py
 ```
 
-`hand_to_body: sí` solo cuando el resultado es **COMPATIBLE** (trayectoria lejos→cerca hacia bolsillo). **INCOMPATIBLE** / **INDETERMINADO** → `no`. Acepta `poses_full.npy` con forma `(T, 8, 2)` o Kanvis `(T, 8, 3)` (x,y,conf).
+- `hand_to_body: sí` = **COMPATIBLE**; `filter_fp_safe: sí` = **INCOMPATIBLE** (único descarte FP fuerte).
+- Config: `har/pocket_filter_config.json` — por defecto `hand_to_body_backend`: **`v2`** (algoritmo nuevo; `legacy` = regla antigua).
+- Salida: `eval_pocket_output.json` junto al npy (`har2_test` siempre; `detect_json` si backend es `v2`).
 
 ## Programs
 

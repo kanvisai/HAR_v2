@@ -7,18 +7,110 @@
 
 - Spec: `KANVIS_Filtro_Ignacio_Especificacion.docx` (v1.0, filtro determinista de trayectorias hacia el bolsillo).
 - Código actual: `har/har_actions/detect.py` → `_hand_to_body`.
+- Prototipo nuevo: `har/pocket_filter/` + `har/har2_test.py`.
 - Integración Kanvis: Orchestrator (`har_premodel`, `har_robbery_review`, `har_sam3_gate`) y contrato de poses C1 (`poses_full.npy` 8 KP, COCO 5–12).
 
 ---
 
-## 0. Contexto de producto (por qué importa)
+## 0. Contexto de producto Kanvis (lectura obligatoria)
 
-Kanvis ya tiene un modelo de robo (p41/p48 / ensemble motion) entrenado con miles de clips. Siguen apareciendo **falsos positivos en acciones cotidianas** (pasear, mirar lineal, balancear brazos, llevar producto al pecho, etc.).
+> **Este documento va dirigido a otro agente.** Lee primero esta sección entera, luego el resto, y **responde siguiendo la plantilla de la sección 14** (respuesta muy estructurada, sin improvisar el formato).
 
-Hipótesis operativa del equipo:
+### 0.1 Qué es Kanvis
 
-> Robar implica, en la mayoría de casos visibles, **llevar la mano hacia el cuerpo** (típicamente zona de bolsillo / ocultación).  
-> Si el modelo de robo dispara **y no hay evidencia de esa aproximación**, se trata como **falso positivo** (o al menos no se avisa / no se escala).
+**Kanvis** es un **sistema de detección de hurtos en retail** (supermercados / pasillos). Objetivo de negocio: identificar comportamientos de **ocultación o manipulación sospechosa** en vídeo de cámara fija, con el mínimo de **falsas alarmas** que puedan desgastar operación en tienda o a los clientes.
+
+No es un proyecto académico de HAR de pasillo: es **capa heurística de apoyo** a un pipeline de producción que ya incluye modelos entrenados con **miles de clips** y despliegue en tienda.
+
+### 0.2 Qué ve el sistema (datos)
+
+| Capa | Qué produce |
+|------|-------------|
+| **C1 / Monitoring** | Personas en cámara, tracks, chunks de vídeo, esqueleto **8 keypoints** (hombros, codos, muñecas, caderas; COCO 5–12), export `poses_full.npy` |
+| **C2 / Motion (IAModel)** | Scores de robo (p41, p48, ensembles, etc.) por chunk |
+| **C3 / Orchestrator** | Decide candidatos, encadena **HAR**, **SAM3** (segmentación/objeto), política de aviso y revisión humana |
+
+Coordenadas del esqueleto: normalizadas (0–1), **eje Y hacia abajo**. Puntos no vistos = `NaN`. En Kanvis es frecuente `(T, 8, 3)` con confianza por keypoint.
+
+Este repo **HAR_v2** no entrena el modelo de robo: **analiza el esqueleto** para marcar **gestos interpretables** (caminar, parar, llevar algo, **acercar la mano al cuerpo**, etc.).
+
+### 0.3 El problema que estamos resolviendo
+
+El **modelo de hurtos** sigue disparando **falsos positivos (FP)** en acciones **cotidianas** del pasillo:
+
+- Pasear y balancear los brazos.
+- Parar a mirar el lineal sin coger producto.
+- Caminar con producto en la mano de forma visible (llevar al pecho, cesta, etc.).
+- Gestos breves (mano arriba, ajustarse la ropa) que el motion interpreta como patrón de robo.
+
+**Coste del FP:** alarmas innecesarias, revisión humana, posible escala a SAM/VLM, pérdida de confianza del sistema.
+
+**Hipótesis del equipo (no dogma, pero guía el diseño):**
+
+> Un hurto con ocultación visible suele incluir una **cinemática de aproximación de la mano hacia el cuerpo** (bolsillo lateral, fajo del pantalón, pecho/chaqueta en casos avanzados).  
+> Si el modelo de robo dispara **y no hay evidencia fiable de esa cinemática**, el caso es candidato a **falso positivo** (o al menos **no debe escalarse** como alerta fuerte).
+
+**Precaución crítica:** “no se vio la mano” (oclusión, cámara lateral, pose mala) **no es** lo mismo que “manos lejos del cuerpo”. Por eso el contrato de Ignacio tiene **tres estados**, no un sí/no binario.
+
+### 0.4 Qué entendemos por “acciones raras” o sospechosas (en este proyecto)
+
+No clasificamos “raro” por estadística de la tienda, sino por **patrones geométricos del esqueleto** ligados a ocultación:
+
+| Acción / patrón | Relevancia hurtos | Estado en el código |
+|-----------------|-------------------|---------------------|
+| **Aproximación mano → bolsillo / cuerpo** (`hand_to_body` mejorado) | **Central** — filtro FP y refuerzo de candidato | Prototipo `pocket_filter` |
+| Llevar mano estable mientras camina (`carry`) | Puede ser bolsa legal o producto; sospecha moderada | HAR pasillo legacy |
+| Mano arriba breve (`hand_up`) | A veces cotidiano; a veces gesticulación antes de ocultar | HAR pasillo legacy |
+| Walk / stop / turn / arm_swing | **Cotidianos** — ayudan a **explicar** FP | HAR pasillo |
+| Mano a pecho, bajo abrigo, mochila | Hipótesis alternativas (v2+) | Fuera de v1 bolsillo |
+
+**Enfoque actual v1:** afinar **muy bien** la señal “**mano que se acerca al cuerpo hacia zona de bolsillo**” con **trayectoria temporal** (lejos → cerca), no solo “mano cerca de la cadera un instante”.
+
+**No es objetivo v1:** detectar el **objeto** robado en píxeles (eso es SAM/VLM). Es objetivo v1: **¿hubo gesto de acercar mano al cuerpo/bolsillo con evidencia en el esqueleto?**
+
+### 0.5 Cadena de decisión deseada (visión)
+
+```text
+Persona en pasillo
+    → esqueleto en tiempo real
+    → modelo motion: ¿candidato a hurto?
+            SI
+                → FILTRO geométrico (este trabajo)
+                      COMPATIBLE   → conservar alerta / seguir SAM3
+                      INDETERMINADO → conservar alerta; explicar incertidumbre
+                      INCOMPATIBLE  → candidato FP (solo si política ON y sin otras hipótesis)
+            NO
+                → (HAR cotidiano puede adelantar skip de C2 en algunos pipelines)
+```
+
+El prototipo **`har2_test.py`** prueba el filtro **offline** con un `poses_full.npy`:
+
+- `hand_to_body: sí` = **COMPATIBLE** (aproximación observada).
+- Filtrar FPs de forma **segura** en producción = mirar **INCOMPATIBLE**, no el simple “no”.
+
+### 0.6 Por qué este documento y este repo
+
+- **Spec Ignacio** (`KANVIS_Filtro_Ignacio_Especificacion.docx`): contrato determinista muñeca → bolsillo.
+- **HAND_TO_BODY_SOLUCIONES.md**: estudio, opciones, estado del prototipo, brechas, handoff.
+- **Código:** `har/pocket_filter/` + CLI `har/har2_test.py` (separado del clasificador de pasillo c0/c1/c5).
+
+Kanvis ya consume un gesto llamado `hand_to_body` en Orchestrator; el legacy en `detect.py` es **demasiado laxo**. Aquí se busca reemplazar o complementar esa señal con algo **defendible en revisión de vídeo**.
+
+### 0.7 Criterios de éxito (producto)
+
+| Criterio | Descripción |
+|----------|-------------|
+| **Recall de ocultación visible** | No perder hurtos donde la mano sí llega al bolsillo/cuerpo |
+| **FP cotidianos filtrables** | En clips con motion+alarma pero gesto cotidiano, poder declarar **INCOMPATIBLE** cuando la pose lo permita |
+| **Prudencia** | Oclusión / lateral / chunk corto → **INDETERMINADO**, no FP automático |
+| **Auditoría** | Misma entrada → misma salida; JSON con tiempos y distancias |
+| **Operación** | Primero **modo observación** en Orchestrator; descarte automático solo tras calibración acordada |
+
+---
+
+## 0bis. Resumen del problema técnico (una frase)
+
+Kanvis detecta hurtos con ML; necesitamos un **módulo geométrico** que identifique **muy bien** si hubo **acercamiento de la mano al cuerpo (bolsillo)** en el esqueleto, para **bajar falsas alarmas** sin confundir “no visto” con “no ocurrió”.
 
 Eso exige un detector de “mano al cuerpo / hacia bolsillo” con:
 
@@ -851,3 +943,92 @@ JSON alineado a spec (evolucionar hacia ejemplo `ignacio-obs-1` del docx).
 | Cómo probar | `.venv/bin/python3 har2_test.py poses_full.npy [--json --compare-legacy]` |
 | Qué significa `hand_to_body` hoy | Solo **COMPATIBLE** = sí; para filtrar FP mira **`INCOMPATIBLE`**, no el booleano inverso. |
 | Tu misión | Endurecer contra spec, calibrar umbrales, reducir COMPATIBLE espurio y INDETERMINADO por chunks cortos, y proponer técnicas (§12.2) con evidencia en métricas. |
+
+---
+
+## 14. Instrucciones para el agente receptor — **responde con este formato**
+
+**Objetivo de tu respuesta:** tomar **todo** este documento (Kanvis = hurtos en retail, FP por acciones cotidianas, necesidad de detectar **acercamiento mano al cuerpo/bolsillo** en esqueleto, prototipo `pocket_filter`, spec Ignacio) y devolver un **plan de acción técnico y de producto** accionable.
+
+**Reglas:**
+
+1. **No implementes código** en tu primera respuesta salvo que el humano lo pida después; prioriza diagnóstico, propuestas y priorización.
+2. **No simplifiques** el problema a binario “hand_to_body sí/no”; respeta COMPATIBLE / INCOMPATIBLE / INDETERMINADO.
+3. Cita **secciones concretas** de este MD o archivos del repo cuando argumentes.
+4. Si falta información, lista **preguntas cerradas** al final (máx. 5), no bloquees el resto del informe.
+5. Escribe en **español**, tono técnico claro.
+
+### Plantilla obligatoria de respuesta (copia los encabezados)
+
+Responde usando **exactamente** estas secciones y subsecciones (puedes usar tablas y listas dentro):
+
+---
+
+#### 1. Resumen ejecutivo
+
+- 5–8 líneas: qué es Kanvis, qué problema resolvemos, estado del prototipo, recomendación principal.
+
+#### 2. Comprensión del contexto
+
+- 2.1 Pipeline Kanvis (C1 → C2 → C3) y dónde encaja el filtro.
+- 2.2 Qué significa “acción rara” / sospechosa en este alcance (vs cotidiano).
+- 2.3 Política propuesta: cuándo bajar alerta por **INCOMPATIBLE** vs mantener por **INDETERMINADO**.
+
+#### 3. Diagnóstico del prototipo actual
+
+- Fortalezas (qué ya acierta la spec).
+- Debilidades (referencia a §11.5–11.6 y código `evaluate.py`).
+- Riesgos si se desplegara tal cual (FP, FN, operación).
+
+#### 4. Recomendaciones priorizadas
+
+Tabla:
+
+| ID | Prioridad (P0/P1/P2) | Recomendación | Impacto esperado | Esfuerzo | Dependencias |
+|----|----------------------|---------------|------------------|----------|--------------|
+
+Mínimo **8 filas** cubriendo: calibración umbrales, `valid_mask`, ventana evento, tests, visualización, fusión de parejas, integración Orchestrator, multi-destino v2.
+
+#### 5. Propuestas técnicas (detalle)
+
+Para cada **P0** y **P1**, una subsección:
+
+- **Problema**
+- **Enfoque propuesto** (algoritmo o proceso)
+- **Alternativas descartadas** y por qué
+- **Métrica** para validar éxito
+- **Archivos** a tocar en HAR_v2 / Kanvis
+
+#### 6. Plan de validación y calibración
+
+- Datasets necesarios (FP cotidianos, TP hurtos, indeterminados).
+- Comparativas (legacy vs `pocket_filter` vs solo proximidad).
+- Criterios go/no-go para modo observación y para descarte automático.
+- Tabla de métricas a reportar (recall, FP evitados, % indeterminado por motivo).
+
+#### 7. Integración Kanvis
+
+- Cambios en Orchestrator (`har_premodel`, `har_robbery_review`, gates SAM3).
+- Contrato JSON persistente por `event_id`.
+- Modo observación vs `accion_aplicada`.
+
+#### 8. Roadmap sugerido
+
+Fases **semana o hito** (numeradas): prototipo endurecido → batch offline → observación en tienda → activación condicional.
+
+#### 9. Riesgos residuales
+
+Tabla: riesgo | probabilidad | impacto | mitigación.
+
+#### 10. Preguntas al equipo producto / datos
+
+Lista numerada (máx. 5).
+
+#### 11. Conclusión
+
+- Decisión recomendada en una frase.
+- Siguiente paso concreto (un solo comando o PR si aplica).
+
+---
+
+**Fin de la plantilla.** El humano evaluará tu respuesta por claridad, priorización y coherencia con el contexto de **detección de hurtos** y **acciones de acercamiento al cuerpo**, no por volumen de texto.

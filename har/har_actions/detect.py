@@ -18,6 +18,15 @@ from har_actions.pose import ARM_SIDE, HIP_L, HIP_R, SHOULDER_L, SHOULDER_R, for
 
 ACTION_CONFIG = Path(__file__).resolve().parents[1] / "actions_config.json"
 
+
+def _hand_to_body_backend() -> str:
+    try:
+        from pocket_filter.config import hand_to_body_backend
+
+        return hand_to_body_backend()
+    except ImportError:
+        return "legacy"
+
 NOT_OBSERVABLE: tuple[str, ...] = ("looking down",)
 
 
@@ -51,7 +60,12 @@ def detect(poses: np.ndarray, fps: float, aspect: float = 16 / 9) -> list[Action
     actions += _arm_swing(features, walk_mask)
     actions += _carry(features, walk_mask)
     actions += _hand_up(features)
-    actions += _hand_to_body(features)
+    if _hand_to_body_backend() == "v2":
+        from pocket_filter.hand_to_body import detect_hand_to_body_actions
+
+        actions += detect_hand_to_body_actions(poses, fps, aspect)
+    else:
+        actions += _hand_to_body(features)
     actions = _merge(actions, gap=4)
     config = load_action_config()
     actions = [action for action in actions if action_enabled(action.id, config)]

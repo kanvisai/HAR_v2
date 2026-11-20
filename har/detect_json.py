@@ -14,12 +14,18 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from har_actions.detect import NOT_OBSERVABLE, detect, disabled_actions, evaluate_category, report
 from har_actions.pose import EXAMPLE_POSES, NAMES, fps_and_video, frame_aspect, load_poses, smooth
+from pocket_filter.config import hand_to_body_backend
+from pocket_filter.evaluate import evaluate_pocket
+from pocket_filter.io import load_poses_array
+from pocket_filter.types import pocket_result_to_dict
 
 
 def write_json(destination: Path, poses_path: Path, fps: float, video: Path | None, n_frames: int, actions) -> dict:
@@ -86,9 +92,33 @@ def main() -> None:
         raise SystemExit(f"npy not found: {args.poses}")
 
     output = args.output if args.output is not None else args.poses.with_name("actions.json")
-    poses = smooth(load_poses(args.poses), window=3)
+    try:
+        raw_poses, conf = load_poses_array(args.poses)
+    except ValueError:
+        raw_poses = load_poses(args.poses)
+        conf = None
+    poses = smooth(raw_poses, window=3) if hand_to_body_backend() == "legacy" else raw_poses
     fps, video = fps_and_video(args.poses)
-    actions = detect(poses, fps, frame_aspect(video))
+    aspect = frame_aspect(video)
+    actions = detect(poses, fps, aspect)
+
+    row_mask = None
+    vm = args.poses.with_name("valid_mask.npy")
+    if vm.is_file():
+        row_mask = np.load(vm)
+    if hand_to_body_backend() == "v2":
+        pocket_eval = evaluate_pocket(
+            raw_poses,
+            fps=fps,
+            aspect=aspect,
+            row_mask=row_mask,
+            keypoint_conf=conf,
+        )
+        pocket_path = output.with_name("eval_pocket_output.json")
+        pocket_path.write_text(
+            json.dumps(pocket_result_to_dict(pocket_eval), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     document = write_json(output, args.poses, fps, video, len(poses), actions)
     evaluation = write_eval(output.with_name("eval_cat_output.json"), args.poses, fps, video, poses, actions)
