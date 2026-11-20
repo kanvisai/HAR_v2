@@ -572,7 +572,7 @@ def evaluate_pocket(
     resultado, motivo, best = fuse_pairs(pairs, cfg)
     t0 = _time_at(eval_start, timestamps, fps)
     t1 = _time_at(eval_end, timestamps, fps)
-    return PocketResult(
+    result = PocketResult(
         resultado=resultado,
         hand_to_body=resultado == "COMPATIBLE",
         filter_fp_safe=resultado == "INCOMPATIBLE",
@@ -586,6 +586,9 @@ def evaluate_pocket(
         best_pair=best,
         intervalo_s=(t0, t1),
     )
+    from pocket_filter.context_guard import apply_context_guard
+
+    return apply_context_guard(result, poses, fps=fps, aspect=aspect)
 
 
 # Re-export for backwards compatibility

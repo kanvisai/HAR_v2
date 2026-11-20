@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
-from har_actions.detect import detect
+from har_actions.detect import detect, detect_mobility_context, gesture_seconds
 from har_actions.pose import fps_and_video, frame_aspect, load_poses, smooth
 from pocket_filter.config import hand_to_body_backend, load_pocket_config
 from pocket_filter.evaluate import evaluate_pocket
@@ -149,8 +149,21 @@ def main() -> None:
     print(f"Backend config:  {document['hand_to_body_backend_config']} (detect: legacy|v2)")
     print(f"Resultado:       {result.resultado}")
     print(f"hand_to_body:    {'sí' if hand_to_body else 'no'}")
+    if result.hand_to_body_raw is not None and result.hand_to_body_raw != hand_to_body:
+        print(f"hand_to_body_raw:  {'sí' if result.hand_to_body_raw else 'no'}  (pocket sin contexto)")
     print(f"filter_fp_safe:  {'sí' if result.filter_fp_safe else 'no'}")
     print(f"Motivo:          {result.motivo}")
+    if result.context_guard_enabled:
+        mob = gesture_seconds(detect_mobility_context(smooth(poses, window=3), fps, aspect), fps)
+        print(
+            f"Contexto clip:   walk {mob.get('walk', 0):.1f}s  "
+            f"stop {mob.get('stop', 0):.1f}s  "
+            f"(ventana gesto: walk {result.ctx_walk_frac:.0%}  "
+            f"stop {result.ctx_stop_frac:.0%}  "
+            f"manos lejos {result.ctx_hands_away_frac:.0%})"
+        )
+        if result.context_veto:
+            print(f"Context veto:    {result.context_veto}")
     print(f"Acción:          {result.accion_propuesta}")
     print(f"JSON:            {out_path}")
     if result.best_pair:

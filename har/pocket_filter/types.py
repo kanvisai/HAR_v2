@@ -40,6 +40,14 @@ class PocketResult:
     best_pair: PairEvidence | None = None
     intervalo_s: tuple[float, float] = (0.0, 0.0)
     legacy_hand_to_body: bool | None = None
+    hand_to_body_raw: bool | None = None
+    context_guard_enabled: bool = False
+    context_veto: str | None = None
+    ctx_walk_frac: float = 0.0
+    ctx_stop_frac: float = 0.0
+    ctx_hands_away_frac: float = 0.0
+    ctx_walk_s: float = 0.0
+    ctx_stop_s: float = 0.0
 
     @property
     def accion_propuesta(self) -> str:

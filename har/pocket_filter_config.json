@@ -31,5 +31,15 @@
     "contralateral_delta_bonus": 0.08,
     "frozen_repeat_frames": 5,
     "frozen_torso_eps": 0.008
+  },
+  "context_guard": {
+    "enabled": true,
+    "hands_away_axis_min": 0.38,
+    "veto_walk_window_frac": 0.45,
+    "veto_walk_clip_min_s": 1.5,
+    "veto_stop_window_frac": 0.55,
+    "veto_hands_away_window_frac": 0.60,
+    "veto_stop_hands_away_window_frac": 0.50,
+    "veto_weak_motives_only": true
   }
 }

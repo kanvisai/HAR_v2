@@ -47,6 +47,18 @@ class Action:
         return data
 
 
+def detect_mobility_context(poses: np.ndarray, fps: float, aspect: float = 16 / 9) -> list[Action]:
+    """Solo walk y stop (caminar / quieto en pasillo), sin hand_to_body."""
+    features = _features(poses, fps, aspect)
+    walk_mask = _motion_mask(features, walking=True)
+    stop_mask = _motion_mask(features, walking=False)
+    stop_mask &= ~_dilate(walk_mask, 3)
+    actions: list[Action] = []
+    actions += _from_mask(features, walk_mask, "walk", "Walk", "The hips move along the aisle.")
+    actions += _from_mask(features, stop_mask, "stop", "Stop", "The hips stay in place.")
+    return _merge(actions, gap=4)
+
+
 def detect(poses: np.ndarray, fps: float, aspect: float = 16 / 9) -> list[Action]:
     """Smoothed poses, shape (T, 8, 2). aspect is the frame width divided by its height."""
     features = _features(poses, fps, aspect)
