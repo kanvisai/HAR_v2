@@ -9,6 +9,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --preflight
   .venv/bin/python3 batch_data_result.py /path/data_result --csv /tmp/informe.csv --workers 20
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
+  .venv/bin/python3 batch_data_result.py /path/data_result --debug 10 --csv /tmp/debug_muestra.csv
 """
 from __future__ import annotations
 
@@ -590,7 +591,7 @@ def main() -> None:
         type=int,
         metavar="N",
         default=0,
-        help="Evalúa N clips y muestra tabla en pantalla (sin CSV)",
+        help="Evalúa N clips: tabla en pantalla; con --csv también guarda ese subconjunto",
     )
     parser.add_argument(
         "--workers",
@@ -665,6 +666,9 @@ def main() -> None:
         )
         print_debug_table(rows)
         summarize_audit(rows)
+        out_path = args.output.expanduser().resolve()
+        write_csv(rows, out_path)
+        print(f"\n(debug) CSV guardado: {out_path}", flush=True)
         return
 
     out_path = args.output.expanduser().resolve()
