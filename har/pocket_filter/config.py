@@ -27,6 +27,11 @@ class PocketConfig:
     contact_consecutive: int = 2
     min_torso_px: float = 40.0
     side_view_ratio: float = 0.25
+    allow_side_view_geometry: bool = True
+    enable_axis_body_approach: bool = True
+    axis_extend_min: float = 0.38
+    axis_tuck_max: float = 0.22
+    axis_delta_min: float = 0.14
     identity_hip_jump_L: float = 0.75
     identity_jump_window_s: float = 0.15
     scale_jump_ratio: float = 0.40

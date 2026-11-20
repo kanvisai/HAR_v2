@@ -78,7 +78,7 @@ def _frame_geometry(
     u = sh / l_norm
     width = float(np.linalg.norm(p[SHOULDER_L] - p[SHOULDER_R]))
     frontal = width / l_norm
-    if frontal < cfg.side_view_ratio:
+    if frontal < cfg.side_view_ratio and not cfg.allow_side_view_geometry:
         return False, "SIDE_VIEW", l_px, s, h, u, None, frontal
 
     return True, "", l_px, s, h, u, (p[HIP_L], p[HIP_R]), frontal
@@ -305,6 +305,73 @@ def _time_continuous(i: int, j: int, valid: np.ndarray, period: float, cfg: Pock
     return True
 
 
+def _try_axis_body_approach(
+    axis: np.ndarray,
+    valid: np.ndarray,
+    *,
+    eval_start: int,
+    eval_end: int,
+    cfg: PocketConfig,
+    fps: float,
+    timestamps: np.ndarray | None,
+    wrist: str,
+    pocket: str,
+    valid_ratio: float,
+    ipsi: bool,
+) -> PairEvidence | None:
+    """
+    Muñeca alejada del eje torso → acercamiento al torso (vista frontal, lateral o espalda).
+    Usa solo frames con geometría válida; tolera huecos cortos en la muñeca.
+    """
+    if not cfg.enable_axis_body_approach:
+        return None
+
+    idx = [
+        i
+        for i in range(eval_start, eval_end + 1)
+        if valid[i] and np.isfinite(axis[i])
+    ]
+    if len(idx) < max(3, cfg.contact_consecutive):
+        return None
+
+    best: tuple[float, int, int, float, float] | None = None
+    for ii, i0 in enumerate(idx):
+        a0 = float(axis[i0])
+        if a0 < cfg.axis_extend_min:
+            continue
+        for j0 in idx[ii + 1 :]:
+            dt = _time_at(j0, timestamps, fps) - _time_at(i0, timestamps, fps)
+            if dt > cfg.approach_window_s:
+                break
+            if dt < cfg.approach_min_lead_s:
+                continue
+            a1 = float(axis[j0])
+            drop = a0 - a1
+            if a1 > cfg.axis_tuck_max or drop < cfg.axis_delta_min:
+                continue
+            if best is None or drop > best[0]:
+                best = (drop, i0, j0, a0, a1)
+
+    if best is None:
+        return None
+
+    drop, i0, j0, a0, a1 = best
+    return PairEvidence(
+        wrist=wrist,  # type: ignore
+        pocket=pocket,  # type: ignore
+        verdict="COMPATIBLE",
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        t_origen=_time_at(i0, timestamps, fps),
+        d_origen=a0,
+        t_entrada=_time_at(j0, timestamps, fps),
+        d_entrada=a1,
+        d_min=a1,
+        valid_ratio=valid_ratio,
+        approach_delta=drop,
+        ipsilateral=ipsi,  # type: ignore
+    )
+
+
 def _valid_runs(mask: np.ndarray) -> list[tuple[int, int]]:
     runs: list[tuple[int, int]] = []
     i, n = 0, len(mask)
@@ -491,15 +558,32 @@ def _evaluate_pair(
                 )
         run_i = run_j
 
-    side_n = sum(
-        1
-        for i in range(eval_start, eval_end + 1)
-        if _frame_geometry(poses[i], aspect, frame_height, cfg)[1] == "SIDE_VIEW"
+    axis_hit = _try_axis_body_approach(
+        axis,
+        valid,
+        eval_start=eval_start,
+        eval_end=eval_end,
+        cfg=cfg,
+        fps=fps,
+        timestamps=timestamps,
+        wrist=wrist,
+        pocket=pocket,
+        valid_ratio=valid_ratio,
+        ipsi=ipsi,
     )
-    if side_n > eval_len * 0.5:
-        return PairEvidence(
-            wrist, pocket, "INDETERMINADO", "VISTA_NO_APTA", valid_ratio=valid_ratio, ipsilateral=ipsi  # type: ignore
+    if axis_hit is not None:
+        return axis_hit
+
+    if not cfg.allow_side_view_geometry:
+        side_n = sum(
+            1
+            for i in range(eval_start, eval_end + 1)
+            if _frame_geometry(poses[i], aspect, frame_height, cfg)[1] == "SIDE_VIEW"
         )
+        if side_n > eval_len * 0.5:
+            return PairEvidence(
+                wrist, pocket, "INDETERMINADO", "VISTA_NO_APTA", valid_ratio=valid_ratio, ipsilateral=ipsi  # type: ignore
+            )
 
     if valid_ratio < min_ratio:
         return PairEvidence(
