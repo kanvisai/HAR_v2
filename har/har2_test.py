@@ -165,7 +165,10 @@ def main() -> None:
             tag = f"{p.wrist}→bolsillo_{p.pocket}"
             extra = ""
             if p.verdict == "COMPATIBLE" and p.d_entrada is not None:
-                extra = f"  t {p.t_origen:.2f}→{p.t_entrada:.2f}  d {p.d_origen:.2f}→{p.d_entrada:.2f}"
+                if p.t_origen is not None and p.d_origen is not None:
+                    extra = f"  t {p.t_origen:.2f}→{p.t_entrada:.2f}  d {p.d_origen:.2f}→{p.d_entrada:.2f}"
+                else:
+                    extra = f"  entrada t={p.t_entrada:.2f}  d_min={p.d_min}"
             print(f"  {tag:22} {p.verdict:14} {p.motivo}{extra}")
     if args.compare_legacy and result.legacy_hand_to_body is not None:
         print()

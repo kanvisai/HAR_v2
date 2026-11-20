@@ -182,14 +182,104 @@ def _identity_break(i: int, hip_c, l_norm, period: float, cfg: PocketConfig) -> 
     return False
 
 
-def _origin_qualifies(d_origin: float, d_entry: float, cfg: PocketConfig) -> bool:
-    drop = d_origin - d_entry
-    if drop < cfg.delta_min:
+def _wrist_axis_series(
+    poses: np.ndarray,
+    wrist_ix: int,
+    shoulder_ix: int,
+    hip_ix: int,
+    aspect: float,
+) -> np.ndarray:
+    t = len(poses)
+    axis = np.full(t, np.nan)
+    for i in range(t):
+        p = poses[i]
+        if not all(np.isfinite(p[k]).all() for k in (shoulder_ix, hip_ix, wrist_ix)):
+            continue
+        s = p[shoulder_ix].copy()
+        s[0] *= aspect
+        h = p[hip_ix].copy()
+        h[0] *= aspect
+        w = p[wrist_ix].copy()
+        w[0] *= aspect
+        sh = h - s
+        length = float(np.linalg.norm(sh))
+        if length < 1e-4:
+            continue
+        t_proj = np.clip(np.dot(w - s, sh) / (length * length), 0.0, 1.0)
+        projection = s + t_proj * sh
+        axis[i] = float(np.linalg.norm(w - projection) / length)
+    return axis
+
+
+def _origin_qualifies(
+    d_origin: float,
+    d_entry: float,
+    axis_origin: float,
+    cfg: PocketConfig,
+) -> bool:
+    """Fase extendida: brazo lejos del bolsillo y alejado del eje del torso."""
+    if d_origin < cfg.r_far:
         return False
-    if d_origin >= cfg.r_far:
-        return True
-    soft_far = cfg.r_near + cfg.delta_min * 0.5
-    return d_origin >= soft_far and drop >= cfg.delta_min
+    if axis_origin < cfg.extend_axis_min:
+        return False
+    return (d_origin - d_entry) >= cfg.delta_min
+
+
+def _tuck_qualifies(
+    d: np.ndarray,
+    axis: np.ndarray,
+    entry_idx: int,
+    end_idx: int,
+    cfg: PocketConfig,
+) -> tuple[bool, float | None, float | None]:
+    """
+    Fase de acercar al cuerpo: en la zona del bolsillo la muñeca queda pegada al torso.
+    Opcional: acercamiento adicional (delta o segundo mínimo de eje).
+    """
+    if entry_idx > end_idx:
+        return False, None, None
+    seg_d = d[entry_idx : end_idx + 1]
+    seg_a = axis[entry_idx : end_idx + 1]
+    mask = np.isfinite(seg_d) & np.isfinite(seg_a)
+    if mask.sum() < cfg.contact_consecutive:
+        return False, None, None
+    d_min = float(np.min(seg_d[mask]))
+    a_min = float(np.min(seg_a[mask]))
+    if a_min > cfg.tuck_axis_max:
+        return False, d_min, a_min
+    d_entry = float(d[entry_idx])
+    tuck_extra = d_entry - d_min >= cfg.delta_tuck_extra
+    near_span = int(np.sum(mask))
+    if not tuck_extra and near_span < max(cfg.contact_consecutive, 3):
+        return False, d_min, a_min
+    return True, d_min, a_min
+
+
+def _count_swing_near_runs(
+    d: np.ndarray,
+    axis: np.ndarray,
+    valid: np.ndarray,
+    cfg: PocketConfig,
+    eval_start: int,
+    eval_end: int,
+) -> int:
+    """Pasadas cerca del bolsillo sin pegar la mano al torso (típico balanceo al caminar)."""
+    swings = 0
+    i = eval_start
+    while i <= eval_end:
+        if not (valid[i] and np.isfinite(d[i]) and d[i] <= cfg.r_near):
+            i += 1
+            continue
+        j = i
+        mins: list[float] = []
+        while j <= eval_end and valid[j] and np.isfinite(d[j]) and d[j] <= cfg.r_near:
+            if np.isfinite(axis[j]):
+                mins.append(float(axis[j]))
+            j += 1
+        if mins and float(np.min(mins)) > cfg.tuck_axis_max:
+            swings += 1
+        i = j
+    return swings
 
 
 def _invalid_gap_frames(i: int, j: int, valid: np.ndarray, period: float, fps: float, cfg: PocketConfig) -> int:
@@ -252,6 +342,9 @@ def _evaluate_pair(
     d, valid, l_norm, hip_c = _dist_series(
         poses, wrist_ix, pocket_ix, aspect, frame_height, cfg, eval_mask, exportable, conf
     )
+    shoulder_ix = SHOULDER_L if wrist == "left" else SHOULDER_R
+    hip_ix_arm = HIP_L if wrist == "left" else HIP_R
+    axis = _wrist_axis_series(poses, wrist_ix, shoulder_ix, hip_ix_arm, aspect)
     t = len(d)
     period = _nominal_period(timestamps, fps)
     eval_len = max(1, eval_end - eval_start + 1)
@@ -264,6 +357,14 @@ def _evaluate_pair(
     )
     if eval_slice.sum() == 0:
         return base
+
+    swing_runs = _count_swing_near_runs(d, axis, valid, cfg, eval_start, eval_end)
+    if swing_runs > cfg.max_near_swing_episodes:
+        return PairEvidence(
+            wrist, pocket, "INDETERMINADO", "BALANCEO_BRAZO", valid_ratio=valid_ratio, ipsilateral=ipsi  # type: ignore
+        )
+
+    tuck_horizon = max(4, int(round(0.65 * fps)))
 
     for start, end in _valid_runs(valid):
         if end < eval_start or start > eval_end:
@@ -289,7 +390,9 @@ def _evaluate_pair(
                 t_j = _time_at(j, timestamps, fps)
                 if t_j < win_start_t or t_j > win_end_t:
                     continue
-                if not _origin_qualifies(float(d[j]), d_entry, cfg):
+                if not np.isfinite(axis[j]):
+                    continue
+                if not _origin_qualifies(float(d[j]), d_entry, float(axis[j]), cfg):
                     continue
                 if _invalid_gap_frames(j, i, valid, period, fps, cfg) > max(
                     2, int(round(cfg.max_time_gap_factor * period * fps))
@@ -311,9 +414,13 @@ def _evaluate_pair(
             if origin_idx is None:
                 continue
 
+            tuck_end = min(end, eval_end, i + tuck_horizon)
+            tuck_ok, d_min, _a_min = _tuck_qualifies(d, axis, i, tuck_end, cfg)
+            if not tuck_ok:
+                continue
+
             seg = d[start : end + 1]
             seg_v = valid[start : end + 1]
-            d_min = float(np.nanmin(seg[seg_v])) if seg_v.any() else None
             t_ret = None
             for k in range(i, end + 1):
                 if valid[k] and d[k] >= cfg.r_far:
@@ -351,9 +458,20 @@ def _evaluate_pair(
         ):
             run_j += 1
         if run_j - run_i >= min_contact:
-            segment = d[run_i:run_j]
-            d_min_run = float(np.min(segment))
-            if d_min_run <= cfg.deep_contact_r:
+            tuck_ok, d_min_run, a_min_run = _tuck_qualifies(d, axis, run_i, run_j - 1, cfg)
+            if not tuck_ok or d_min_run is None:
+                run_i = run_j
+                continue
+            prior_extend = False
+            for k in range(eval_start, run_i):
+                if not valid[k] or not np.isfinite(d[k]) or not np.isfinite(axis[k]):
+                    continue
+                if d[k] >= cfg.r_far and axis[k] >= cfg.extend_axis_min:
+                    prior_extend = True
+                    break
+            if prior_extend or d_min_run <= cfg.deep_contact_r or (
+                a_min_run is not None and a_min_run <= cfg.tuck_axis_max * 0.75
+            ):
                 return PairEvidence(
                     wrist=wrist,  # type: ignore
                     pocket=pocket,  # type: ignore

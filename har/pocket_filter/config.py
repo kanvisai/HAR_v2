@@ -14,9 +14,13 @@ class PocketConfig:
     pocket_lateral_offset: float = 0.04
     r_near: float = 0.30
     r_far: float = 0.50
-    delta_min: float = 0.14
+    delta_min: float = 0.16
+    delta_tuck_extra: float = 0.06
     deep_contact_r: float = 0.22
     sustained_contact_s: float = 0.28
+    extend_axis_min: float = 0.42
+    tuck_axis_max: float = 0.20
+    max_near_swing_episodes: int = 1
     approach_window_s: float = 1.50
     approach_min_lead_s: float = 0.10
     contact_consecutive: int = 2
