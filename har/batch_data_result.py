@@ -7,7 +7,7 @@ Estructura esperada:
 
 Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --preflight
-  .venv/bin/python3 batch_data_result.py /path/data_result -o resultados.csv --workers 20
+  .venv/bin/python3 batch_data_result.py /path/data_result --csv /tmp/informe.csv --workers 20
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
 """
 from __future__ import annotations
@@ -44,6 +44,7 @@ EXPECTS_HAND_TO_BODY_FALSE: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 7, 9, 
 EXPECTS_NO_LABEL: frozenset[int] = frozenset({8, 10, 11, 12})
 
 CSV_FIELDS = [
+    "data_root",
     "path",
     "category",
     "elapsed_s",
@@ -63,27 +64,121 @@ CSV_FIELDS = [
 class ClipRef:
     path: Path
     category: int
+    data_root: Path
 
 
-def discover_clips(data_root: Path) -> list[ClipRef]:
-    root = data_root.resolve()
+@dataclass(frozen=True)
+class DiscoveryResult:
+    clips: list[ClipRef]
+    scan_seconds: float
+
+
+def _scan_one_data_root(root: Path, *, verbose: bool) -> list[ClipRef]:
+    root = root.resolve()
     if not root.is_dir():
         raise SystemExit(f"No es un directorio: {root}")
 
     found: list[ClipRef] = []
-    for cat_dir in sorted(root.iterdir(), key=lambda p: p.name):
-        if not cat_dir.is_dir():
-            continue
-        if not cat_dir.name.isdigit():
-            continue
+    cat_dirs = [
+        p
+        for p in sorted(root.iterdir(), key=lambda p: p.name)
+        if p.is_dir() and p.name.isdigit()
+    ]
+    if verbose:
+        print(f"── Escaneando: {root}", flush=True)
+        print(f"   Carpetas de categoría detectadas: {len(cat_dirs)}", flush=True)
+
+    for cat_dir in cat_dirs:
         category = int(cat_dir.name)
+        n_before = len(found)
         for poses_path in cat_dir.rglob("poses_full.npy"):
             parent = poses_path.parent
             if parent.name.startswith("user_"):
-                found.append(ClipRef(poses_path.resolve(), category))
+                found.append(ClipRef(poses_path.resolve(), category, root))
+        n_cat = len(found) - n_before
+        if verbose and n_cat:
+            print(f"   cat {category:2d}: +{n_cat:5d} clips  (acumulado en esta raíz: {len(found)})", flush=True)
 
-    found.sort(key=lambda c: (c.category, str(c.path)))
+    if verbose:
+        print(f"   Subtotal en esta raíz: {len(found)} clips\n", flush=True)
     return found
+
+
+def discover_clips(data_roots: list[Path], *, verbose: bool = False) -> DiscoveryResult:
+    t_scan0 = time.perf_counter()
+    merged: list[ClipRef] = []
+    for root in data_roots:
+        merged.extend(_scan_one_data_root(root, verbose=verbose))
+    merged.sort(key=lambda c: (str(c.data_root), c.category, str(c.path)))
+    scan_s = time.perf_counter() - t_scan0
+    if verbose:
+        print(
+            f"Escaneo terminado en {scan_s:.1f} s ({scan_s / 60:.1f} min) — {len(merged)} clips\n",
+            flush=True,
+        )
+        if len(data_roots) > 1:
+            print(f"Total combinado ({len(data_roots)} raíz/raíces): {len(merged)} clips\n", flush=True)
+    return DiscoveryResult(merged, scan_s)
+
+
+def _short_path(path: Path, max_len: int = 72) -> str:
+    s = str(path)
+    if len(s) <= max_len:
+        return s
+    return "…" + s[-(max_len - 1) :]
+
+
+def _fmt_duration(seconds: float) -> str:
+    if seconds < 0 or not (seconds < 1e12):
+        return "—"
+    if seconds < 90:
+        return f"{seconds:.0f} s"
+    if seconds < 5400:
+        return f"{seconds / 60:.1f} min"
+    return f"{seconds / 3600:.2f} h"
+
+
+def _print_progress(
+    done: int,
+    total: int,
+    t0: float,
+    *,
+    prefix: str = "",
+    detail: str = "",
+    errors: int = 0,
+    mean_clip_s: float | None = None,
+    workers: int = 1,
+) -> None:
+    elapsed = max(time.perf_counter() - t0, 1e-6)
+    remain = max(total - done, 0)
+    pct_done = 100.0 * done / total if total else 0.0
+    pct_left = 100.0 * remain / total if total else 0.0
+    rate = done / elapsed
+
+    # ETA por ritmo real (clips/s en esta corrida)
+    eta_wall_s = remain / rate if rate > 0 else 0.0
+
+    # ETA por media de tiempo CPU por clip (más estable cuando arranca el pool)
+    if mean_clip_s is not None and mean_clip_s > 0 and workers > 0 and remain > 0:
+        eta_mean_s = (remain * mean_clip_s) / max(workers, 1) * 1.05
+    else:
+        eta_mean_s = eta_wall_s
+
+    bar_w = 28
+    filled = int(bar_w * done / total) if total else 0
+    bar = "#" * filled + "-" * (bar_w - filled)
+    err_part = f"  |  errores={errors}" if errors else ""
+    mean_part = f"  |  media {mean_clip_s:.2f} s/clip" if mean_clip_s else ""
+
+    line = (
+        f"{prefix}[{bar}]  {pct_done:5.1f}%  ({done}/{total})  "
+        f"|  pendiente {pct_left:5.1f}% ({remain} clips){mean_part}  "
+        f"|  restante ~{_fmt_duration(eta_mean_s)}  "
+        f"(wall ~{_fmt_duration(eta_wall_s)}){err_part}"
+    )
+    if detail:
+        line += f"\n{prefix}      último: {detail}"
+    print(line, flush=True)
 
 
 def expected_hand_to_body(category: int) -> str:
@@ -133,6 +228,7 @@ def evaluate_one_clip(
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
     row: dict[str, Any] = {
+        "data_root": "",
         "path": str(poses_path),
         "category": category,
         "error": "",
@@ -193,9 +289,11 @@ def evaluate_one_clip(
     return row
 
 
-def _worker(task: tuple[str, int, str | None, float]) -> dict[str, Any]:
-    path_s, cat, cfg, height = task
-    return evaluate_one_clip(Path(path_s), cat, config_path=cfg, default_height=height)
+def _worker(task: tuple[str, int, str, str | None, float]) -> dict[str, Any]:
+    path_s, cat, data_root_s, cfg, height = task
+    row = evaluate_one_clip(Path(path_s), cat, config_path=cfg, default_height=height)
+    row["data_root"] = data_root_s
+    return row
 
 
 def _format_bool_cell(value: Any) -> str:
@@ -227,18 +325,38 @@ def print_debug_table(rows: list[dict[str, Any]]) -> None:
 
 def preflight_report(
     clips: list[ClipRef],
-    data_root: Path,
+    data_roots: list[Path],
     *,
+    scan_seconds: float,
     workers: int,
     sample_size: int,
     config_path: str | None,
     default_height: float,
 ) -> None:
+    t_preflight0 = time.perf_counter()
+    print("=== PREFLIGHT pocket v2 / data_result ===\n", flush=True)
+    print(
+        f"Nota: el escaneo de disco (buscar poses_full.npy) ya consumió "
+        f"{scan_seconds / 60:.1f} min; el batch completo lo repetirá una vez al inicio.\n",
+        flush=True,
+    )
+    roots_unique = sorted({c.data_root.resolve() for c in clips})
+    if not clips:
+        for r in data_roots:
+            print(f"  (vacío) {r.resolve()}", flush=True)
+        print("\nSin archivos que analizar.")
+        return
+
+    by_root: dict[Path, int] = Counter(c.data_root.resolve() for c in clips)
+    print("Raíces incluidas:", flush=True)
+    for r in roots_unique:
+        print(f"  • {r}  →  {by_root[r]} clips", flush=True)
+
     by_cat = Counter(c.category for c in clips)
-    print(f"Raíz: {data_root.resolve()}")
-    print(f"Total clips (poses_full.npy bajo user_*): {len(clips)}")
-    print(f"Workers planificados: {workers}")
-    print("\nClips por categoría:")
+    print(f"\nTotal clips (poses_full.npy bajo user_*): {len(clips)}")
+    print(f"Workers planificados (batch completo): {workers}")
+
+    print("\nClips por categoría (global):")
     for cat in sorted(by_cat):
         note = ""
         if cat in EXPECTS_HAND_TO_BODY_TRUE:
@@ -249,40 +367,87 @@ def preflight_report(
             note = "  [sin etiqueta fija]"
         print(f"  {cat:2d}: {by_cat[cat]:5d}{note}")
 
-    if not clips:
-        print("\nSin archivos que analizar.")
+    if len(roots_unique) > 1:
+        print("\nClips por categoría y raíz:")
+        for r in roots_unique:
+            sub = [c for c in clips if c.data_root.resolve() == r]
+            sub_cat = Counter(c.category for c in sub)
+            print(f"  {r}", flush=True)
+            for cat in sorted(sub_cat):
+                print(f"    cat {cat:2d}: {sub_cat[cat]:5d}")
+
+    if sample_size <= 0:
+        print("\n(--sample 0) Sin benchmark de evaluación; solo inventario + escaneo.", flush=True)
+        print(f"\nTiempo de este preflight: {time.perf_counter() - t_preflight0:.1f} s", flush=True)
+        print("=== fin preflight ===", flush=True)
         return
 
     n_sample = min(sample_size, len(clips))
     sample = clips[:n_sample] if n_sample == len(clips) else random.sample(clips, n_sample)
-    print(f"\nMidiendo {n_sample} clip(s) de muestra (secuencial)...")
-    times: list[float] = []
-    for clip in sample:
-        row = evaluate_one_clip(
-            clip.path,
-            clip.category,
-            config_path=config_path,
-            default_height=default_height,
-        )
-        if row.get("error"):
-            print(f"  aviso muestra: {clip.path.name} -> {row['error']}")
-            continue
-        times.append(float(row["elapsed_s"]))
+    bench_workers = min(workers, n_sample)
+    print(
+        f"\nBenchmark evaluación: {n_sample} clip(s) con {bench_workers} workers "
+        f"(igual que el batch, sin escaneo)...",
+        flush=True,
+    )
+    t_bench0 = time.perf_counter()
+    bench_rows = run_batch(
+        sample,
+        workers=bench_workers,
+        config_path=config_path,
+        default_height=default_height,
+        on_progress=True,
+        progress_every=max(1, n_sample // 8),
+    )
+    bench_wall = time.perf_counter() - t_bench0
 
+    times = [float(r["elapsed_s"]) for r in bench_rows if not r.get("error")]
+    sample_errors = sum(1 for r in bench_rows if r.get("error"))
     if not times:
-        print("No se pudo estimar tiempo (errores en muestra).")
+        print("\nNo se pudo estimar tiempo (errores en todas las muestras).", flush=True)
         return
 
-    avg = sum(times) / len(times)
-    p95 = sorted(times)[int(0.95 * (len(times) - 1))]
+    ok_n = len(times)
+    avg = sum(times) / ok_n
+    p95 = sorted(times)[int(0.95 * max(ok_n - 1, 0))]
     total = len(clips)
-    est_serial = avg * total
-    est_parallel = avg * (total / max(workers, 1)) * 1.08
 
-    print(f"  media: {avg:.3f} s/clip   p95 muestra: {p95:.3f} s")
-    print(f"\nTiempo estimado (solo evaluación pocket, sin I/O extra):")
-    print(f"  secuencial:  {est_serial/60:.1f} min ({est_serial:.0f} s)")
-    print(f"  paralelo:    {est_parallel/60:.1f} min ({est_parallel:.0f} s)  ({workers} workers)")
+    # Throughput real de la mini-corrida (incluye arranque del pool + I/O de disco)
+    bench_throughput = ok_n / max(bench_wall, 1e-6)
+    est_eval_parallel = total / bench_throughput
+    # Límite inferior teórico (solo CPU por clip, peor caso con colas)
+    est_eval_parallel_p95 = (total * p95) / max(bench_workers, 1) * 1.1
+    est_eval_parallel = max(est_eval_parallel, est_eval_parallel_p95)
+
+    est_eval_serial = avg * total
+    est_batch_total = scan_seconds + est_eval_parallel
+    est_batch_serial = scan_seconds + est_eval_serial
+
+    preflight_wall = scan_seconds + (time.perf_counter() - t_preflight0)
+
+    print(f"\nMuestra OK: {ok_n}/{n_sample}  (errores: {sample_errors})", flush=True)
+    print(f"  benchmark wall: {bench_wall:.1f} s ({bench_wall / 60:.1f} min)")
+    print(f"  throughput medido: {bench_throughput:.3f} clip/s  ({60 / bench_throughput:.2f} s/clip efectivo)")
+    print(f"  CPU por clip (media / p95): {avg:.3f} s / {p95:.3f} s")
+
+    print("\n--- Estimación batch COMPLETO (desde cero: escaneo + evaluación) ---", flush=True)
+    print(f"  1) Escaneo inventario:     {scan_seconds / 60:.1f} min  ({scan_seconds:.0f} s)")
+    print(
+        f"  2) Evaluación paralela:     {est_eval_parallel / 60:.1f} min  ({est_eval_parallel:.0f} s)"
+        f"  [{workers} workers]"
+    )
+    print(
+        f"  TOTAL estimado:            {est_batch_total / 60:.1f} min  ({est_batch_total:.0f} s)"
+    )
+    print("\n  (Referencia eval secuencial sin paralelizar:", flush=True)
+    print(f"   escaneo + eval ≈ {est_batch_serial / 60:.1f} min)", flush=True)
+
+    print(
+        f"\nEste --preflight lleva ~{preflight_wall / 60:.1f} min hasta aquí "
+        f"(escaneo {scan_seconds / 60:.1f} + benchmark {bench_wall / 60:.1f}); "
+        f"no es comparable solo con la línea 'evaluación paralela'."
+    )
+    print("\n=== fin preflight ===", flush=True)
 
 
 def run_batch(
@@ -292,21 +457,71 @@ def run_batch(
     config_path: str | None,
     default_height: float,
     on_progress: bool,
+    progress_every: int = 0,
 ) -> list[dict[str, Any]]:
-    tasks = [(str(c.path), c.category, config_path, default_height) for c in clips]
+    tasks = [
+        (str(c.path), c.category, str(c.data_root.resolve()), config_path, default_height)
+        for c in clips
+    ]
     rows: list[dict[str, Any]] = []
     done = 0
+    errors = 0
+    elapsed_sum = 0.0
+    elapsed_n = 0
     total = len(tasks)
+    pool_workers = max(1, workers)
+    if progress_every <= 0:
+        progress_every = max(1, min(pool_workers, total // 50 or 1))
+    t0 = time.perf_counter()
+    last_progress_t = t0
 
-    with ProcessPoolExecutor(max_workers=max(1, workers)) as pool:
+    with ProcessPoolExecutor(max_workers=pool_workers) as pool:
         futures = {pool.submit(_worker, t): t for t in tasks}
         for fut in as_completed(futures):
-            rows.append(fut.result())
+            row = fut.result()
+            rows.append(row)
             done += 1
-            if on_progress and (done % max(1, total // 20) == 0 or done == total):
-                print(f"  Progreso: {done}/{total}")
+            if row.get("error"):
+                errors += 1
+            else:
+                try:
+                    elapsed_sum += float(row.get("elapsed_s", 0) or 0)
+                    elapsed_n += 1
+                except (TypeError, ValueError):
+                    pass
+            mean_clip = elapsed_sum / elapsed_n if elapsed_n else None
+            now = time.perf_counter()
+            should_log = done == total or (now - last_progress_t) >= 2.0 or done % progress_every == 0
+            if on_progress and should_log:
+                detail = _short_path(Path(row.get("path", "")), 90)
+                if row.get("error"):
+                    detail += "  ERR"
+                _print_progress(
+                    done,
+                    total,
+                    t0,
+                    prefix="  ",
+                    detail=detail,
+                    errors=errors,
+                    mean_clip_s=mean_clip,
+                    workers=pool_workers,
+                )
+                last_progress_t = now
 
-    rows.sort(key=lambda r: (int(r["category"]), r["path"]))
+    if on_progress and total:
+        mean_clip = elapsed_sum / elapsed_n if elapsed_n else None
+        _print_progress(
+            total,
+            total,
+            t0,
+            prefix="  ",
+            detail="completado",
+            errors=errors,
+            mean_clip_s=mean_clip,
+            workers=pool_workers,
+        )
+
+    rows.sort(key=lambda r: (r.get("data_root", ""), int(r["category"]), r["path"]))
     return rows
 
 
@@ -348,16 +563,22 @@ def main() -> None:
         description="Barrido data_result → CSV pocket v2 / hand_to_body"
     )
     parser.add_argument(
-        "data_root",
+        "data_roots",
         type=Path,
-        help="Carpeta data_result (contiene 0/, 1/, 2/, ...)",
+        nargs="+",
+        metavar="DATA_RESULT",
+        help="Una o más carpetas data_result (cada una con 0/, 1/, 2/, ...)",
     )
     parser.add_argument(
         "-o",
         "--output",
+        "--csv",
+        dest="output",
         type=Path,
+        metavar="RUTA_CSV",
         default=Path("pocket_data_result.csv"),
-        help="CSV de salida (modo batch)",
+        help="Ruta del CSV de resultados (absoluta o relativa; crea carpetas padre si faltan). "
+        "Solo en modo batch (no con --preflight ni --debug).",
     )
     parser.add_argument(
         "--preflight",
@@ -389,21 +610,40 @@ def main() -> None:
     parser.add_argument(
         "--quiet",
         action="store_true",
-        help="Menos mensajes de progreso",
+        help="Sin barra de progreso en el batch",
+    )
+    parser.add_argument(
+        "--no-scan-log",
+        action="store_true",
+        help="No imprimir detalle por categoría al escanear (solo totales)",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=0,
+        help="Imprimir progreso cada N clips (0 = automático)",
     )
     args = parser.parse_args()
 
     random.seed(args.seed)
     cfg_path = str(args.config.resolve()) if args.config else None
 
-    clips = discover_clips(args.data_root)
-    if not clips:
-        raise SystemExit(f"No se encontraron poses_full.npy bajo user_* en {args.data_root}")
+    verbose_scan = not args.no_scan_log
+    if args.preflight and args.debug <= 0:
+        verbose_scan = True
+
+    discovered = discover_clips(args.data_roots, verbose=verbose_scan)
+    clips = discovered.clips
+    scan_s = discovered.scan_seconds
+    if not clips and not args.preflight:
+        roots_s = ", ".join(str(r) for r in args.data_roots)
+        raise SystemExit(f"No se encontraron poses_full.npy bajo user_* en: {roots_s}")
 
     if args.preflight and args.debug <= 0:
         preflight_report(
             clips,
-            args.data_root,
+            args.data_roots,
+            scan_seconds=scan_s,
             workers=args.workers,
             sample_size=args.sample,
             config_path=cfg_path,
@@ -421,12 +661,21 @@ def main() -> None:
             config_path=cfg_path,
             default_height=args.height,
             on_progress=not args.quiet,
+            progress_every=args.progress_every,
         )
         print_debug_table(rows)
         summarize_audit(rows)
         return
 
-    print(f"Evaluando {len(clips)} clips con {args.workers} workers...")
+    out_path = args.output.expanduser().resolve()
+    roots_line = ", ".join(str(r.resolve()) for r in args.data_roots)
+    print(
+        f"Evaluando {len(clips)} clips | {args.workers} workers | raíces: {roots_line}",
+        flush=True,
+    )
+    print(f"CSV de salida: {out_path}", flush=True)
+    if scan_s > 1.0:
+        print(f"(Escaneo previo: {scan_s:.1f} s — ya contado antes del batch en esta ejecución)", flush=True)
     t0 = time.perf_counter()
     rows = run_batch(
         clips,
@@ -434,11 +683,16 @@ def main() -> None:
         config_path=cfg_path,
         default_height=args.height,
         on_progress=not args.quiet,
+        progress_every=args.progress_every,
     )
-    elapsed = time.perf_counter() - t0
-    write_csv(rows, args.output)
-    print(f"CSV: {args.output.resolve()}")
-    print(f"Tiempo real: {elapsed:.1f} s ({elapsed/60:.1f} min)")
+    eval_elapsed = time.perf_counter() - t0
+    total_elapsed = scan_s + eval_elapsed
+    write_csv(rows, out_path)
+    print(f"CSV escrito: {out_path}")
+    print(
+        f"Tiempo real: eval {eval_elapsed:.1f} s ({eval_elapsed / 60:.1f} min)  "
+        f"+ escaneo {scan_s:.1f} s → total {total_elapsed:.1f} s ({total_elapsed / 60:.1f} min)"
+    )
     summarize_audit(rows)
 
     errors = sum(1 for r in rows if r.get("error"))
