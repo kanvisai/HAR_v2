@@ -48,6 +48,10 @@ class PocketResult:
     ctx_hands_away_frac: float = 0.0
     ctx_walk_s: float = 0.0
     ctx_stop_s: float = 0.0
+    hand_to_body_confidence: float = 0.0
+    primary_action: str = ""
+    primary_action_confidence: float = 0.0
+    cotidian_seconds: dict[str, float] = field(default_factory=dict)
 
     @property
     def accion_propuesta(self) -> str:

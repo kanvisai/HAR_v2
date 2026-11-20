@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 from har_actions.pose import fps_and_video, frame_aspect, load_poses
 from pocket_filter.config import load_pocket_config
 from legacy_hand_to_body import evaluate_legacy
+from pocket_filter.action_policy import evaluate_pocket_with_policy
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.io import load_poses_array
 
@@ -67,6 +68,9 @@ CSV_FIELDS = [
     "ctx_stop_frac",
     "ctx_hands_away_frac",
     "ctx_walk_s",
+    "hand_to_body_confidence",
+    "primary_action",
+    "primary_action_confidence",
     "error",
 ]
 
@@ -311,11 +315,15 @@ def evaluate_one_clip(
                     "ctx_stop_frac": "",
                     "ctx_hands_away_frac": "",
                     "ctx_walk_s": "",
+                    "hand_to_body_confidence": "",
+                    "primary_action": "",
+                    "primary_action_confidence": "",
                 }
             )
         else:
-            cfg = load_pocket_config(Path(config_path)) if config_path else load_pocket_config()
-            result = evaluate_pocket(
+            cfg_path = Path(config_path) if config_path else None
+            cfg = load_pocket_config(cfg_path)
+            result = evaluate_pocket_with_policy(
                 poses,
                 fps=fps,
                 aspect=aspect,
@@ -324,8 +332,10 @@ def evaluate_one_clip(
                 row_mask=row_mask,
                 keypoint_conf=conf,
                 config=cfg,
+                config_path=cfg_path,
             )
             ht = bool(result.hand_to_body)
+            ht_raw = bool(result.hand_to_body_raw)
             exp_s, match_s, audit = audit_row(category, ht)
             row.update(
                 {
@@ -338,12 +348,17 @@ def evaluate_one_clip(
                     "expected_hand_to_body": exp_s,
                     "label_match": match_s,
                     "audit_class": audit,
-                    "hand_to_body_raw": ht,
+                    "hand_to_body_raw": ht_raw,
                     "context_veto": result.context_veto or "",
                     "ctx_walk_frac": round(result.ctx_walk_frac, 4),
                     "ctx_stop_frac": round(result.ctx_stop_frac, 4),
                     "ctx_hands_away_frac": round(result.ctx_hands_away_frac, 4),
                     "ctx_walk_s": round(result.ctx_walk_s, 3),
+                    "hand_to_body_confidence": round(result.hand_to_body_confidence, 4),
+                    "primary_action": result.primary_action,
+                    "primary_action_confidence": round(
+                        result.primary_action_confidence, 4
+                    ),
                 }
             )
     except Exception as exc:
@@ -365,6 +380,9 @@ def evaluate_one_clip(
                 "ctx_stop_frac": "",
                 "ctx_hands_away_frac": "",
                 "ctx_walk_s": "",
+                "hand_to_body_confidence": "",
+                "primary_action": "",
+                "primary_action_confidence": "",
                 "error": str(exc),
             }
         )

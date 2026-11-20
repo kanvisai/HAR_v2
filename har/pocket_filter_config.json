@@ -38,6 +38,15 @@
     "frozen_repeat_frames": 5,
     "frozen_torso_eps": 0.008
   },
+  "action_policy": {
+    "enabled": true,
+    "hand_to_body_min_confidence": 0.62,
+    "weak_motive_min_confidence": 0.72,
+    "walk_override_walk_frac": 0.42,
+    "walk_override_walk_clip_min_s": 1.0,
+    "cotidian_min_visible_frac": 0.08,
+    "inconclusive_below_s": 0.25
+  },
   "context_guard": {
     "enabled": false,
     "hands_away_axis_min": 0.38,

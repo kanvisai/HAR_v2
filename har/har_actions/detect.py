@@ -47,6 +47,32 @@ class Action:
         return data
 
 
+def _detect_cotidian_core(poses: np.ndarray, fps: float, aspect: float) -> list[Action]:
+    features = _features(poses, fps, aspect)
+    walk_mask = _motion_mask(features, walking=True)
+    stop_mask = _motion_mask(features, walking=False)
+    stop_mask &= ~_dilate(walk_mask, 3)
+    actions: list[Action] = []
+    actions += _from_mask(features, walk_mask, "walk", "Walk", "The hips move along the aisle.")
+    actions += _from_mask(features, stop_mask, "stop", "Stop", "The hips stay in place.")
+    actions += _turn_torso(features)
+    actions += _arm_swing(features, walk_mask)
+    actions += _carry(features, walk_mask)
+    actions += _hand_up(features)
+    return actions
+
+
+def detect_cotidian_actions(
+    poses: np.ndarray, fps: float, aspect: float = 16 / 9
+) -> list[Action]:
+    """Walk, stop, turn_torso, arm_swing, carry, hand_up — sin hand_to_body (sin pocket)."""
+    actions = _merge(_detect_cotidian_core(poses, fps, aspect), gap=4)
+    config = load_action_config()
+    actions = [action for action in actions if action_enabled(action.id, config)]
+    actions.sort(key=lambda item: (item.frame_start, item.frame_end, item.id, item.side))
+    return actions
+
+
 def detect_mobility_context(poses: np.ndarray, fps: float, aspect: float = 16 / 9) -> list[Action]:
     """Solo walk y stop (caminar / quieto en pasillo), sin hand_to_body."""
     features = _features(poses, fps, aspect)
@@ -61,22 +87,13 @@ def detect_mobility_context(poses: np.ndarray, fps: float, aspect: float = 16 / 
 
 def detect(poses: np.ndarray, fps: float, aspect: float = 16 / 9) -> list[Action]:
     """Smoothed poses, shape (T, 8, 2). aspect is the frame width divided by its height."""
-    features = _features(poses, fps, aspect)
-    walk_mask = _motion_mask(features, walking=True)
-    stop_mask = _motion_mask(features, walking=False)
-    stop_mask &= ~_dilate(walk_mask, 3)
-    actions: list[Action] = []
-    actions += _from_mask(features, walk_mask, "walk", "Walk", "The hips move along the aisle.")
-    actions += _from_mask(features, stop_mask, "stop", "Stop", "The hips stay in place.")
-    actions += _turn_torso(features)
-    actions += _arm_swing(features, walk_mask)
-    actions += _carry(features, walk_mask)
-    actions += _hand_up(features)
+    actions = _detect_cotidian_core(poses, fps, aspect)
     if _hand_to_body_backend() == "v2":
         from pocket_filter.hand_to_body import detect_hand_to_body_actions
 
         actions += detect_hand_to_body_actions(poses, fps, aspect)
     else:
+        features = _features(poses, fps, aspect)
         actions += _hand_to_body(features)
     actions = _merge(actions, gap=4)
     config = load_action_config()

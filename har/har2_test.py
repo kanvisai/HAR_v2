@@ -27,7 +27,7 @@ import numpy as np
 from har_actions.detect import detect, detect_mobility_context, gesture_seconds
 from har_actions.pose import fps_and_video, frame_aspect, load_poses, smooth
 from pocket_filter.config import hand_to_body_backend, load_pocket_config
-from pocket_filter.evaluate import evaluate_pocket
+from pocket_filter.action_policy import evaluate_pocket_with_policy
 from pocket_filter.io import load_poses_array
 from pocket_filter.types import pocket_result_to_dict
 
@@ -113,7 +113,7 @@ def main() -> None:
     interval = tuple(args.interval) if args.interval else None
     cfg = load_pocket_config(args.config) if args.config else load_pocket_config()
 
-    result = evaluate_pocket(
+    result = evaluate_pocket_with_policy(
         poses,
         fps=fps,
         aspect=aspect,
@@ -124,6 +124,7 @@ def main() -> None:
         row_mask=row_mask,
         keypoint_conf=conf,
         interval_s=interval,
+        config_path=args.config,
     )
 
     hand_to_body = result.resultado != "INCOMPATIBLE" if args.legacy_compat else result.hand_to_body
@@ -149,10 +150,22 @@ def main() -> None:
     print(f"Backend config:  {document['hand_to_body_backend_config']} (detect: legacy|v2)")
     print(f"Resultado:       {result.resultado}")
     print(f"hand_to_body:    {'sí' if hand_to_body else 'no'}")
+    print(f"confianza HTB:   {result.hand_to_body_confidence:.3f}")
     if result.hand_to_body_raw is not None and result.hand_to_body_raw != hand_to_body:
-        print(f"hand_to_body_raw:  {'sí' if result.hand_to_body_raw else 'no'}  (pocket sin contexto)")
+        print(
+            f"hand_to_body_raw:  {'sí' if result.hand_to_body_raw else 'no'}  "
+            f"(pocket COMPATIBLE sin política)"
+        )
+    if result.primary_action:
+        print(
+            f"Acción primaria: {result.primary_action}  "
+            f"(conf {result.primary_action_confidence:.3f})"
+        )
+    if result.cotidian_seconds:
+        parts = [f"{k} {v:.1f}s" for k, v in sorted(result.cotidian_seconds.items())]
+        print(f"HAR cotidiano:   {', '.join(parts)}")
     print(f"filter_fp_safe:  {'sí' if result.filter_fp_safe else 'no'}")
-    print(f"Motivo:          {result.motivo}")
+    print(f"Motivo pocket:   {result.motivo}")
     if result.context_guard_enabled:
         mob = gesture_seconds(detect_mobility_context(smooth(poses, window=3), fps, aspect), fps)
         print(
