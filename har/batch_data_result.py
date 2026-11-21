@@ -43,6 +43,8 @@ from pocket_filter.mix_backend import evaluate_pocket_mix
 from pocket_filter.score_fusion import evaluate_pocket_scores
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.io import load_poses_array
+from pocket_filter.kinematics import compute_clip_kinematics
+from pocket_filter.config import PocketConfig
 
 # Categorías donde esperamos hand_to_body (positivos hurto / campaña 6+14)
 EXPECTS_HAND_TO_BODY_TRUE: frozenset[int] = frozenset({6, 14})
@@ -52,6 +54,52 @@ EXPECTS_HAND_TO_BODY_FALSE: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 7, 9, 
 
 # Sin etiqueta de expectativa fiable en documentación
 EXPECTS_NO_LABEL: frozenset[int] = frozenset({8, 10, 11, 12})
+
+_KIN_CSV_KEYS = (
+    "kin_wrist_radial_vel_min",
+    "kin_approach_monotone_frac",
+    "kin_hip_speed_norm",
+    "kin_elbow_angle_deg",
+    "kin_wrist_axis_dist_min",
+)
+
+
+def _kin_csv_empty() -> dict[str, str]:
+    return dict.fromkeys(_KIN_CSV_KEYS, "")
+
+
+def _kin_csv_from_result(
+    poses: np.ndarray,
+    result: Any,
+    *,
+    fps: float,
+    aspect: float,
+    frame_h: float,
+    cfg: PocketConfig,
+    timestamps: np.ndarray | None,
+    row_mask: np.ndarray | None,
+    keypoint_conf: np.ndarray | None,
+) -> dict[str, float]:
+    k = compute_clip_kinematics(
+        poses,
+        result=result,
+        fps=fps,
+        aspect=aspect,
+        frame_height=frame_h,
+        cfg=cfg,
+        timestamps=timestamps,
+        row_mask=row_mask,
+        keypoint_conf=keypoint_conf,
+    )
+    d = k.to_dict()
+    return {
+        "kin_wrist_radial_vel_min": d["wrist_radial_vel_min"],
+        "kin_approach_monotone_frac": d["approach_monotone_frac"],
+        "kin_hip_speed_norm": d["hip_speed_norm"],
+        "kin_elbow_angle_deg": d["elbow_angle_deg"],
+        "kin_wrist_axis_dist_min": d["wrist_axis_dist_min"],
+    }
+
 
 def session_id_from_poses_path(poses_path: Path) -> str:
     """`data_result/<cat>/<session>/user_*/poses_full.npy` → session."""
@@ -82,6 +130,11 @@ CSV_FIELDS = [
     "ctx_stop_frac",
     "ctx_hands_away_frac",
     "ctx_walk_s",
+    "kin_wrist_radial_vel_min",
+    "kin_approach_monotone_frac",
+    "kin_hip_speed_norm",
+    "kin_elbow_angle_deg",
+    "kin_wrist_axis_dist_min",
     "hand_to_body_confidence",
     "primary_action",
     "primary_action_confidence",
@@ -392,6 +445,7 @@ def evaluate_one_clip(
                     "legacy_hand_to_body_confidence": round(leg.confidence, 4),
                     "hand_to_body_v2": "",
                     "audit_class_v2": "",
+                    **_kin_csv_empty(),
                 }
             )
         elif backend == "scores":
@@ -445,6 +499,17 @@ def evaluate_one_clip(
                     ),
                     "hand_to_body_v2": ht_v2,
                     "audit_class_v2": audit_v2,
+                    **_kin_csv_from_result(
+                        poses,
+                        result,
+                        fps=fps,
+                        aspect=aspect,
+                        frame_h=frame_h,
+                        cfg=cfg,
+                        timestamps=timestamps,
+                        row_mask=row_mask,
+                        keypoint_conf=conf,
+                    ),
                 }
             )
         elif backend == "mix":
@@ -498,6 +563,17 @@ def evaluate_one_clip(
                     ),
                     "hand_to_body_v2": ht_v2,
                     "audit_class_v2": audit_v2,
+                    **_kin_csv_from_result(
+                        poses,
+                        result,
+                        fps=fps,
+                        aspect=aspect,
+                        frame_h=frame_h,
+                        cfg=cfg,
+                        timestamps=timestamps,
+                        row_mask=row_mask,
+                        keypoint_conf=conf,
+                    ),
                 }
             )
         else:
@@ -545,6 +621,17 @@ def evaluate_one_clip(
                     "legacy_hand_to_body_confidence": "",
                     "hand_to_body_v2": "",
                     "audit_class_v2": "",
+                    **_kin_csv_from_result(
+                        poses,
+                        result,
+                        fps=fps,
+                        aspect=aspect,
+                        frame_h=frame_h,
+                        cfg=cfg,
+                        timestamps=timestamps,
+                        row_mask=row_mask,
+                        keypoint_conf=conf,
+                    ),
                 }
             )
     except Exception as exc:
@@ -576,6 +663,7 @@ def evaluate_one_clip(
                 "hand_to_body_v2": "",
                 "audit_class_v2": "",
                 "error": str(exc),
+                **_kin_csv_empty(),
             }
         )
     return row

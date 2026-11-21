@@ -210,7 +210,13 @@ Comparar cat 6 TP/FN y cat 0 FP vs `fase2_10pct.csv`.
 
 ---
 
-## Fase 3 — ranker REVIEW (P1-2 mínimo, sin Motion)
+## Fase 3 — ranker REVIEW (opcional, no es el producto)
+
+Logística sobre conf/motivo: sirve para **ordenar cola** si no hay cinemática. **No** sustituye el filtro geométrico ni el modelo Motion externo. Puedes ignorar `train_review_ranker.py` si solo quieres poses/ángulos/velocidades.
+
+---
+
+## Fase 4 — cinemática en batch (P1-1, enfoque acordado)
 
 Entrena logística sobre pool `raw∧¬clear` (+ INDETERMINADO en 6/14), **split por `session_id`**.
 
@@ -229,6 +235,20 @@ Si test recall@100 supera ~15–20 % de forma estable, aplicar:
   -o /tmp/fase2_10pct_scored.csv
 ```
 
-**Criterio:** mejorar test hold-out vs heurística (9/70 @100 en cohortes). Si no, siguiente paso = **P0-5** cuando exista motion score en clips o **P1-1** features de trayectoria en batch.
+Columnas nuevas en CSV (`pocket_filter/kinematics.py`):
 
-**Nota:** el ranker usa **category solo al entrenar**; en runtime solo entran motivo + ctx + conf.
+- `kin_wrist_radial_vel_min` — velocidad radial muñeca→bolsillo (más negativa = acercamiento)
+- `kin_approach_monotone_frac` — fracción de pasos con distancia decreciente
+- `kin_hip_speed_norm` — velocidad cadera normalizada (marcha)
+- `kin_elbow_angle_deg` — ángulo codo en pico de distancia mínima
+- `kin_wrist_axis_dist_min` — distancia muñeca al eje torso en el pico
+
+```bash
+git pull
+.venv/bin/python3 batch_data_result.py "$DATA" --backend v2 \
+  --sample-frac 0.10 --seed 42 -o /tmp/fase4_kin_10pct.csv --workers 50
+head -1 /tmp/fase4_kin_10pct.csv | tr ',' '\\n' | grep kin_
+.venv/bin/python3 analyze_kinematics_separation.py /tmp/fase4_kin_10pct.csv
+```
+
+**Pásame:** salida `analyze_kinematics_separation` (medianas pos vs neg). Siguiente: reglas **`robbery_confirm` + kin_*** o umbrales por motivo, no otra red.
