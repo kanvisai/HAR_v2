@@ -209,7 +209,7 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
     cat0 = [r for r in ok if int(r["category"]) == 0]
     if cat0:
         raw_rate_0 = sum(1 for r in cat0 if _bool(r.get("hand_to_body_raw", ""))) / len(cat0)
-        review_rate_0 = sum(1 for r in cat0 if _orch_branch(r) == "REVIEW_RAW") / len(cat0)
+        review_rate_0 = sum(1 for r in cat0 if _orch_branch_doctrine(r) == "REVIEW_RAW") / len(cat0)
         lines.append(
             f"  H3 cat0: raw_rate={raw_rate_0:.1%} → REVIEW branch={review_rate_0:.1%} "
             f"(si raw≈70–80%, el tramo REVIEW puede saturar SAM)"
