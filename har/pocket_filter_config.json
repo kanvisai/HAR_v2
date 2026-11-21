@@ -66,6 +66,13 @@
     "review_min_confidence": 0.48,
     "review_axis_min_confidence": 0.52
   },
+  "mix_backend": {
+    "enabled": true,
+    "v2_clear_trust_confidence": 0.80,
+    "cotidian_override_min_confidence": 0.80,
+    "legacy_veto_when_low_conf": true,
+    "legacy_agree_promotes_clear": true
+  },
   "context_guard": {
     "enabled": false,
     "hands_away_axis_min": 0.38,

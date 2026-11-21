@@ -11,6 +11,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10 --csv /tmp/debug_muestra.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --debug 20 --csv /tmp/legacy.csv
+  .venv/bin/python3 batch_data_result.py /path/data_result --backend mix -o /tmp/mix.csv --workers 50
   .venv/bin/python3 batch_data_result.py /path/data_result --category 6 --backend v2 -o cat6_v2.csv
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ from har_actions.pose import fps_and_video, frame_aspect, load_poses
 from pocket_filter.config import load_pocket_config
 from legacy_hand_to_body import evaluate_legacy
 from pocket_filter.action_policy import evaluate_pocket_with_policy
+from pocket_filter.mix_backend import evaluate_pocket_mix
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.io import load_poses_array
 
@@ -73,6 +75,7 @@ CSV_FIELDS = [
     "primary_action_confidence",
     "htb_tier",
     "motion_suppress",
+    "legacy_hand_to_body",
     "error",
 ]
 
@@ -322,6 +325,51 @@ def evaluate_one_clip(
                     "primary_action_confidence": "",
                     "htb_tier": "",
                     "motion_suppress": "",
+                    "legacy_hand_to_body": ht,
+                }
+            )
+        elif backend == "mix":
+            cfg_path = Path(config_path) if config_path else None
+            cfg = load_pocket_config(cfg_path)
+            result = evaluate_pocket_mix(
+                poses,
+                fps=fps,
+                aspect=aspect,
+                frame_height=frame_h,
+                timestamps=timestamps,
+                row_mask=row_mask,
+                keypoint_conf=conf,
+                config=cfg,
+                config_path=cfg_path,
+            )
+            ht = bool(result.hand_to_body)
+            ht_raw = bool(result.hand_to_body_raw)
+            exp_s, match_s, audit = audit_row(category, ht)
+            row.update(
+                {
+                    "elapsed_s": round(time.perf_counter() - t0, 4),
+                    "hand_to_body": ht,
+                    "resultado": result.resultado,
+                    "filter_fp_safe": bool(result.filter_fp_safe),
+                    "motivo": result.motivo,
+                    "n_frames": int(result.n_frames),
+                    "expected_hand_to_body": exp_s,
+                    "label_match": match_s,
+                    "audit_class": audit,
+                    "hand_to_body_raw": ht_raw,
+                    "context_veto": result.context_veto or "",
+                    "ctx_walk_frac": round(result.ctx_walk_frac, 4),
+                    "ctx_stop_frac": round(result.ctx_stop_frac, 4),
+                    "ctx_hands_away_frac": round(result.ctx_hands_away_frac, 4),
+                    "ctx_walk_s": round(result.ctx_walk_s, 3),
+                    "hand_to_body_confidence": round(result.hand_to_body_confidence, 4),
+                    "primary_action": result.primary_action,
+                    "primary_action_confidence": round(
+                        result.primary_action_confidence, 4
+                    ),
+                    "htb_tier": result.htb_tier,
+                    "motion_suppress": bool(result.motion_suppress),
+                    "legacy_hand_to_body": bool(result.legacy_hand_to_body),
                 }
             )
         else:
@@ -365,6 +413,7 @@ def evaluate_one_clip(
                     ),
                     "htb_tier": result.htb_tier,
                     "motion_suppress": bool(result.motion_suppress),
+                    "legacy_hand_to_body": "",
                 }
             )
     except Exception as exc:
@@ -391,6 +440,7 @@ def evaluate_one_clip(
                 "primary_action_confidence": "",
                 "htb_tier": "",
                 "motion_suppress": "",
+                "legacy_hand_to_body": "",
                 "error": str(exc),
             }
         )
@@ -765,9 +815,9 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=None, help="pocket_filter_config.json")
     parser.add_argument(
         "--backend",
-        choices=("v2", "legacy"),
+        choices=("v2", "legacy", "mix"),
         default="v2",
-        help="v2 = pocket_filter (har2_test); legacy = HAR pasillo original (_hand_to_body)",
+        help="v2 = pocket_filter; legacy = HAR pasillo; mix = v2 + legacy + cotidiano si conf baja",
     )
     parser.add_argument("--height", type=float, default=1080.0)
     parser.add_argument("--seed", type=int, default=42, help="Semilla para muestras aleatorias")

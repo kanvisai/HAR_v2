@@ -91,6 +91,19 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ---
 
+## Fase **J** — `--backend mix`
+
+v2 + legacy + cotidiano cuando la confianza v2 &lt; **0,80** (sin categoría). Config `mix_backend` en JSON. Barrido:
+
+```bash
+.venv/bin/python3 batch_data_result.py .../data_result --backend mix -o /tmp/mix.csv
+.venv/bin/python3 har2_test.py clip.npy --backend mix
+```
+
+Columna nueva CSV: `legacy_hand_to_body`; regla en `context_veto` (`MIX_*`).
+
+---
+
 ## Fase **I** — `temporal.walk_gate` (ventana ganadora + marcha)
 
 **Objetivo:** bajar FP cat. **0** (~434 → ~250) sin perder mucho recall cat. **6** (3521).

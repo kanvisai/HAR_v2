@@ -69,6 +69,8 @@ def _normalize_backend(name: str) -> str:
         return "v2"
     if n == "legacy":
         return "legacy"
+    if n == "mix":
+        return "mix"
     return n
 
 

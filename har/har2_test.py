@@ -28,6 +28,7 @@ from har_actions.detect import detect, detect_mobility_context, gesture_seconds
 from har_actions.pose import fps_and_video, frame_aspect, load_poses, smooth
 from pocket_filter.config import hand_to_body_backend, load_pocket_config
 from pocket_filter.action_policy import evaluate_pocket_with_policy, load_action_policy_config
+from pocket_filter.mix_backend import evaluate_pocket_mix
 from pocket_filter.io import load_poses_array
 from pocket_filter.types import PocketResult, pocket_result_to_dict
 
@@ -158,6 +159,12 @@ def main() -> None:
         action="store_true",
         help="Sin ventanas temporales (solo un evaluación en todo el npy).",
     )
+    parser.add_argument(
+        "--backend",
+        choices=("v2", "mix"),
+        default="v2",
+        help="v2 = solo pocket; mix = v2 + legacy + cotidiano si conf baja (producción sin categoría).",
+    )
     args = parser.parse_args()
 
     if not args.poses.is_file():
@@ -194,20 +201,35 @@ def main() -> None:
     cfg = load_pocket_config(args.config) if args.config else load_pocket_config()
     use_temporal = False if (args.whole_clip or interval is not None) else None
 
-    result = evaluate_pocket_with_policy(
-        poses,
-        fps=fps,
-        aspect=aspect,
-        frame_height=frame_h,
-        frame_width=frame_w,
-        config=cfg,
-        timestamps=timestamps,
-        row_mask=row_mask,
-        keypoint_conf=conf,
-        interval_s=interval,
-        config_path=args.config,
-        use_temporal=use_temporal,
-    )
+    if args.backend == "mix":
+        result = evaluate_pocket_mix(
+            poses,
+            fps=fps,
+            aspect=aspect,
+            frame_height=frame_h,
+            frame_width=frame_w,
+            config=cfg,
+            timestamps=timestamps,
+            row_mask=row_mask,
+            keypoint_conf=conf,
+            config_path=args.config,
+            use_temporal=use_temporal,
+        )
+    else:
+        result = evaluate_pocket_with_policy(
+            poses,
+            fps=fps,
+            aspect=aspect,
+            frame_height=frame_h,
+            frame_width=frame_w,
+            config=cfg,
+            timestamps=timestamps,
+            row_mask=row_mask,
+            keypoint_conf=conf,
+            interval_s=interval,
+            config_path=args.config,
+            use_temporal=use_temporal,
+        )
 
     hand_to_body = result.resultado != "INCOMPATIBLE" if args.legacy_compat else result.hand_to_body
 
@@ -217,7 +239,11 @@ def main() -> None:
     document = pocket_result_to_dict(result)
     document["poses"] = str(args.poses)
     document["hand_to_body"] = hand_to_body
-    document["hand_to_body_backend_config"] = hand_to_body_backend(args.config)
+    document["hand_to_body_backend_config"] = (
+        args.backend if args.backend == "mix" else hand_to_body_backend(args.config)
+    )
+    if args.backend == "mix" and result.legacy_hand_to_body is not None:
+        document["legacy_hand_to_body"] = bool(result.legacy_hand_to_body)
     primary = result.primary_action or (
         "hand_to_body" if hand_to_body else "inconclusive"
     )
@@ -245,6 +271,13 @@ def main() -> None:
         poses_path=args.poses,
         fps=fps,
     )
+    if args.backend == "mix":
+        leg = (
+            "sí"
+            if result.legacy_hand_to_body
+            else ("no" if result.legacy_hand_to_body is not None else "?")
+        )
+        print(f"  Backend mix: legacy={leg}  regla={result.context_veto or '—'}")
     print(f"JSON: {out_path}")
 
     if not args.verbose:
