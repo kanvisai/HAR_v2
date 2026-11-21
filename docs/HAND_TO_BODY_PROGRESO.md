@@ -5,7 +5,8 @@
 
 > **Baseline producción congelada (G+H):** ver [`HAND_TO_BODY_BASELINE_PRODUCCION.md`](HAND_TO_BODY_BASELINE_PRODUCCION.md).  
 > Config copia: `har/pocket_filter_config.BASELINE_PRODUCCION_H.json`.  
-> CSV referencia: `gate_temporal.csv` — cat **6: 3521/4192**, cat **0 FP: 434**.
+> CSV referencia: `gate_temporal.csv` — cat **6: 3521/4192**, cat **0 FP: 434**.  
+> **Importante:** eso es el **mejor compromiso medido**, no cierre del problema. Paradoja FP/recall y soluciones buscadas: [`HAND_TO_BODY_SOLUCIONES.md` §0ter](HAND_TO_BODY_SOLUCIONES.md).
 
 ---
 
@@ -138,7 +139,7 @@ Tras barrido, guardar CSV como `gate_temporal_walk.csv` y comparar cat **0/6/14*
 
 ## Próximos experimentos (sin tocar baseline sin re-barrido)
 
-- Medir `hand_to_body_raw` en cat 6 en CSV para recall “gesto en pose”.
+- Medir `hand_to_body_raw` en cat 6: `har/audit_htb_metrics.py` (ver apéndice D en [`HAND_TO_BODY_ENGINEERING_STATUS.md`](HAND_TO_BODY_ENGINEERING_STATUS.md)).
 - Ajustar `walk_gate_window_frac` / `walk_gate_contact_min_confidence` según barrido I.
 
 ---

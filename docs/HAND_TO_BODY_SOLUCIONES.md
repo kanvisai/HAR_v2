@@ -2,9 +2,10 @@
 
 **Audiencia:** agente de implementación, calibración y optimización (handoff a agente potente).  
 **Alcance:** diseño, comparación de soluciones, **estado de la implementación prototipo nov 2026**, y preguntas abiertas.  
-**Última actualización del handoff:** 2026-03-20 (tras primer prototipo `pocket_filter` + `har2_test.py`).  
+**Última actualización del handoff:** 2026-11-21 (prototipo calibrado G+H; **problema de producto aún sin solución cerrada**).  
 **Diario de calibración:** [`HAND_TO_BODY_PROGRESO.md`](HAND_TO_BODY_PROGRESO.md).  
 **Baseline producción congelado (G+H):** [`HAND_TO_BODY_BASELINE_PRODUCCION.md`](HAND_TO_BODY_BASELINE_PRODUCCION.md) + `har/pocket_filter_config.BASELINE_PRODUCCION_H.json`.  
+**Engineering status (English, for handoff):** [`HAND_TO_BODY_ENGINEERING_STATUS.md`](HAND_TO_BODY_ENGINEERING_STATUS.md).  
 **Fuentes:**
 
 - Spec: `KANVIS_Filtro_Ignacio_Especificacion.docx` (v1.0, filtro determinista de trayectorias hacia el bolsillo).
@@ -16,7 +17,7 @@
 
 ## 0. Contexto de producto Kanvis (lectura obligatoria)
 
-> **Este documento va dirigido a otro agente.** Lee primero esta sección entera, luego el resto, y **responde siguiendo la plantilla de la sección 14** (respuesta muy estructurada, sin improvisar el formato).
+> **Este documento va dirigido a otro agente.** Lee **§0 (producto)**, luego **§0ter (problema abierto y soluciones buscadas)**, y el resto. **Responde siguiendo la plantilla de la sección 14** (respuesta muy estructurada, sin improvisar el formato). No asumas que el baseline G+H “ya vale” para producción: es un **compromiso medido**, no cierre del problema.
 
 ### 0.1 Qué es Kanvis
 
@@ -132,6 +133,109 @@ Eso exige un detector de “mano al cuerpo / hacia bolsillo” con:
 | `hand_to_object` | En el mensaje de producto se usó como sinónimo informal de “mano lleva algo al cuerpo/bolsillo”; **no** es un detector de objeto en escena. La v1 es **geométrica sobre esqueleto**, no visión de producto. |
 
 La mejora pedida no es “detectar el objeto robado”, sino **detectar muy bien la cinemática de ocultación hacia el cuerpo**, empezando por bolsillo lateral.
+
+---
+
+## 0ter. Problema abierto — por qué **aún necesitamos soluciones** (lectura prioritaria)
+
+> **Mensaje para quien entre a este repo:** Kanvis **ya tiene** un prototipo de filtro geométrico (`pocket_filter`) medido en miles de clips. Eso **no** significa que el problema esté resuelto. Hoy solo tenemos **compromisos** entre recall de robo y falsas alarmas en pasillo. Falta diseño que permita operar en tienda con criterios de éxito claros **sin** elegir “o perdemos hurtos o inundamos revisión humana”.
+
+### 0ter.1 Qué falla en producción (síntoma de negocio)
+
+El **modelo de motion** (C2) sigue elevando candidatos a hurto en vídeo de pasillo. Muchos corresponden a **comportamiento normal** (caminar, parar, llevar producto, balanceo de brazos, mano al torso sin ocultación). Si el Orchestrator trata esos chunks como confirmación fuerte, el sistema:
+
+- Genera **revisiones innecesarias** (humano, SAM/VLM).
+- **Desgasta** la confianza del piloto en tienda.
+- No cumple la hipótesis del filtro: *“motion sí, pero no hay cinemática fiable de mano→cuerpo/bolsillo → probable FP”*.
+
+El filtro hand-to-body de este repo debe **clarificar o descartar** esos candidatos **solo con el esqueleto**, en chunks ~8 s, **sin categoría humana** en runtime.
+
+### 0ter.2 La paradoja técnica (por qué no hay “un boolean mágico”)
+
+Hemos medido en el dataset de auditoría (`data_result`, etiquetas por carpeta solo para evaluar) **tres regímenes** que **ninguno** cumple a la vez los criterios de §0.7:
+
+| Enfoque | Cat. 6 (robo, recall `hand_to_body` claro) | Cat. 0 (pasillo, FP claro) | Veredicto |
+|---------|---------------------------------------------|----------------------------|-----------|
+| **Legacy** (`detect.py`) | ~**37%** | ~**3%** FP | Demasiados hurtos perdidos |
+| **Pocket v2 sin política** | ~**94%** | ~**82%** FP | Pasillo inutilizable |
+| **G+H congelado** (`robbery_confirm` + ventanas 2,5 s) | ~**84%** | ~**9,4%** FP (**434** de 4633) | **Baseline actual = compromiso**, no victoria |
+
+```mermaid
+flowchart LR
+  subgraph objetivo["Objetivo producto"]
+    R["Alto recall robo 6/14"]
+    F["Bajo FP pasillo 0/5…"]
+  end
+  subgraph realidad["Medición full sweep"]
+    L["Legacy: F bajo, R muy bajo"]
+    P["Pocket puro: R alto, F altísimo"]
+    G["G+H: R medio-alto, F ~10% en 0"]
+  end
+  objetivo --> realidad
+  G -.->|"solo llegamos aquí con pérdidas en ambos lados"| objetivo
+```
+
+**Traducción honesta:**
+
+- Con la config **congelada G+H**, en cat. 6 siguen **~671** clips de robo donde `hand_to_body` claro es **falso** (FN) — el motion puede haber disparado bien, pero el filtro **no confirma** el gesto.
+- En cat. 0 quedan **~434** FP: pasillo que el filtro marca como confirmación fuerte. Es **mucho mejor** que el 82% del pocket puro, pero **sigue siendo demasiado** si cada FP escala a revisión costosa.
+- Muchos FN de cat. 6 aún tienen **`hand_to_body_raw=true`** (hubo gesto pocket, política lo rechazó). El contrato de tres señales (`motion_suppress` → claro → raw) **existe en diseño**, pero **la calibración y el uso en Orchestrator no cierran el hueco**.
+
+### 0ter.3 Qué hemos probado y **no** resolvió el triángulo
+
+| Idea | Resultado |
+|------|-----------|
+| Política global de confianza | Recall robo ~49% — descartada |
+| `robbery_confirm` sin ventanas temporales | FP pasillo bueno, recall ~70% — insuficiente en 6 |
+| Ventanas temporales (H) | Sube recall a ~84%, sube FP en 0 vs sin temporal |
+| `walk_gate` | Mejora FP ~1,6 pts, pierde ~1,5 pts recall en 6 — microajuste, no solución |
+| Fusión **legacy veto** / scores agresivos | Baja FP a veces; **destruye** recall en 6 en muestra representativa |
+| Mix `legacy_arbitrate` | Casi idéntico a v2 en muestra 10% — no aporta margen real |
+
+Conclusión de ingeniería (nov 2026): **reglas heurísticas adicionales sobre el mismo esqueleto** están **agotándose**. Hace falta **cambio de enfoque**, no otro umbral suelto.
+
+### 0ter.4 Criterios de éxito que **todavía no** cumplimos
+
+| Criterio (§0.7) | Estado con G+H congelado | Qué falta |
+|-----------------|--------------------------|-----------|
+| Recall ocultación visible | ~84% claro en 6; mejor en `raw` pero sin política de escalado cerrada | Recuperar FN sin reabrir 82% FP |
+| FP cotidianos filtrables | ~9% FP en 0; peor en otras cats cotidianas | Bajar FP **sin** tumbar 6/14 |
+| Prudencia (indeterminado) | Ternario pocket + `raw`; producción usa booleanos derivados | Reglas claras motion↔INDETERMINADO |
+| Operación Orchestrator | Contrato acordado en docs; **implementación/calibración incompletas** | Cablear las 3 señales y medir end-to-end |
+
+### 0ter.5 Qué pedimos explícitamente (tipos de solución)
+
+No buscamos solo “documentar mejor”. Buscamos **propuestas implementables** que ataquen al menos uno de estos frentes:
+
+1. **Fusión con contexto motion** — evaluar pocket solo en el intervalo que C2 marca, o ponderar por score de motion (no ventana fija 2,5 s a ciegas).
+2. **Políticas condicionadas al motivo** — `CONTACTO_BOLSILLO` vs `ACERCAMIENTO_EJE_TORSO` vs aproximación: umbrales y vetos distintos, calibrados con datos.
+3. **Calibración real de scores** — las “confianzas” actuales no son probabilidades; hace falta validación (p.ej. isotónica por motivo) o abandonar el uso de un solo escalar.
+4. **Arquitectura de decisión multi-señal** — optimizar el **sistema** `{motion, hand_to_body, raw, motion_suppress, cotidian}` bajo coste FP/FN acordado, no un único `hand_to_body`.
+5. **Nuevas señales geométricas o temporales** — trayectoria estricta, identidad de brazo, vista lateral, pecho/abrigo (v2+), sin repetir el error “mano cerca un instante = robo”.
+6. **Fusión aprendida pequeña** (GBM / reglas aprendidas) sobre features ya extraíbles del CSV de batch, con evaluación reproducible en `data_result`.
+
+Cualquier propuesta debe **reproducirse** con `batch_data_result.py` + `audit_pocket_csv.py` / `audit_htb_metrics.py` y compararse contra el baseline [`BASELINE_PRODUCCION_H.json`](../har/pocket_filter_config.BASELINE_PRODUCCION_H.json).
+
+### 0ter.6 Diagrama del hueco actual (categoría libre en runtime)
+
+```text
+                    ┌─────────────────────────────────────┐
+  Motion candidato  │  Filtro actual (G+H)                 │
+        ──────────► │  • geometry + robbery_confirm        │
+                    │  • un boolean "claro" por chunk       │
+                    └─────────────────────────────────────┘
+                                      │
+              ┌───────────────────────┼───────────────────────┐
+              ▼                       ▼                       ▼
+     CONFIRM (hand_to_body)    REVIEW (raw, poco usado)   DISCARD / suppress
+     ~84% robos, ~10% FP 0     recall gesto mayor         FN + FP residuales
+              │                       │                       │
+              └───────────────────────┴───────────────────────┘
+                         ▲ AQUÍ FALTA DISEÑO NUEVO ▲
+              orchestración, intervalos motion, motivo, calibración
+```
+
+**Referencias métricas y reproducción:** [`HAND_TO_BODY_BASELINE_PRODUCCION.md`](HAND_TO_BODY_BASELINE_PRODUCCION.md), [`HAND_TO_BODY_PROGRESO.md`](HAND_TO_BODY_PROGRESO.md), [`HAND_TO_BODY_ENGINEERING_STATUS.md`](HAND_TO_BODY_ENGINEERING_STATUS.md) (inglés, apéndices).
 
 ---
 
