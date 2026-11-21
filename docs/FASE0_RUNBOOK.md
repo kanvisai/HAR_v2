@@ -207,3 +207,28 @@ Comparar cat 6 TP/FN y cat 0 FP vs `fase2_10pct.csv`.
 ### Fase 2-b — resultado heurística
 
 `review_priority` actual: recall pos **4 % @50**, **71 % @500**, precisión **~8 %** global. Pasillo comparte motivos/confianza con FN. Siguiente: `tune_review_triage.py` y/o score C2; no SAM top-50 con reglas solas.
+
+---
+
+## Fase 3 — ranker REVIEW (P1-2 mínimo, sin Motion)
+
+Entrena logística sobre pool `raw∧¬clear` (+ INDETERMINADO en 6/14), **split por `session_id`**.
+
+```bash
+git pull
+.venv/bin/python3 train_review_ranker.py /tmp/fase2_10pct.csv \
+  -o review_ranker_weights.json --test-frac 0.2 --seed 42
+```
+
+**Pásame:** bloques **Train** y **Test** (top_50 / top_100).
+
+Si test recall@100 supera ~15–20 % de forma estable, aplicar:
+
+```bash
+.venv/bin/python3 apply_review_ranker.py /tmp/fase2_10pct.csv review_ranker_weights.json \
+  -o /tmp/fase2_10pct_scored.csv
+```
+
+**Criterio:** mejorar test hold-out vs heurística (9/70 @100 en cohortes). Si no, siguiente paso = **P0-5** cuando exista motion score en clips o **P1-1** features de trayectoria en batch.
+
+**Nota:** el ranker usa **category solo al entrenar**; en runtime solo entran motivo + ctx + conf.
