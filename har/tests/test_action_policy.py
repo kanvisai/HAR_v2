@@ -216,6 +216,35 @@ def test_motion_suppress_indeterminate_keeps_motion():
     assert code == "KEEP_INDETERMINADO"
 
 
+def test_robbery_confirm_axis_walking_kin_dwell_blocks_fast_hip():
+    policy = ActionPolicyConfig(
+        kin_axis_dwell_enabled=True,
+        kin_axis_min_near_dwell_s=0.35,
+        kin_axis_max_swing_peaks=4.0,
+        kin_axis_max_hip_speed=0.65,
+        axis_min_confidence_while_walking=0.66,
+    )
+    walking = {
+        "walk_frac": 0.6,
+        "walk_s": 3.0,
+        "stop_frac": 0.1,
+        "stop_s": 0.5,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, _ = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.70,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=walking,
+        policy=policy,
+        kin_near_dwell_s=0.50,
+        kin_swing_peaks=2.0,
+        kin_hip_speed_norm=0.80,
+    )
+    assert not ok
+
+
 def test_robbery_confirm_axis_walking_kin_dwell_exception():
     policy = ActionPolicyConfig(
         gate_mode="robbery_confirm",

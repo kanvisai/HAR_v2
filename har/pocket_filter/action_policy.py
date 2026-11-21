@@ -68,6 +68,8 @@ class ActionPolicyConfig:
     """Eje + marcha: permitir clear si permanencia en r_near y pocos picos de braceo."""
     kin_axis_min_near_dwell_s: float = 0.35
     kin_axis_max_swing_peaks: float = 4.0
+    """Si > 0, excepción eje+marcha solo con kin_hip_speed_norm ≤ umbral (pasillo suele ir más rápido)."""
+    kin_axis_max_hip_speed: float = 0.0
 
 
 def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
@@ -194,8 +196,13 @@ def decide_robbery_confirm(
 
     if motivo in AXIS_MOTIVES:
         if walking:
+            hip_ok = (
+                policy.kin_axis_max_hip_speed <= 0
+                or kin_hip_speed_norm <= policy.kin_axis_max_hip_speed
+            )
             if (
                 policy.kin_axis_dwell_enabled
+                and hip_ok
                 and kin_near_dwell_s >= policy.kin_axis_min_near_dwell_s
                 and kin_swing_peaks <= policy.kin_axis_max_swing_peaks
                 and conf >= policy.axis_min_confidence_while_walking

@@ -30,6 +30,17 @@
 .venv/bin/python3 analyze_kinematics_separation.py /tmp/fase4_kin_10pct.csv
 ```
 
+## Experimento P1-1b V1 (`PRUEBA_KIN_AXIS_DWELL`, 10 % seed 42)
+
+| Métrica | Baseline G+H+P0-3 | V1 dwell | Δ |
+|---------|-------------------|----------|---|
+| Cat 6 clear | 352 | **359** | +7 |
+| Cat 0 FP | **58** | **105** | **+47** |
+
+**No adoptar V1.** Causa: excepción eje+marcha demasiado amplia; FP cat 0 = 67× eje.  
+**Bug corregido:** `CSV_FIELDS` en batch no incluía `kin_near_dwell_s` / `kin_swing_peaks` → re-batch tras pull.  
+**Siguiente prueba:** `PRUEBA_KIN_AXIS_DWELL_V2.json` (dwell 0,45, swing ≤2, hip ≤0,65) + `diagnose_axis_kin_rule.py`.
+
 ## Experimento P2-d (`PRUEBA_KIN_CONTACT_QUIET`, 10 % seed 42)
 
 | Métrica | Baseline G+H+P0-3 | Kin gate | Δ |

@@ -39,6 +39,7 @@ from har_actions.pose import fps_and_video, frame_aspect, load_poses
 from pocket_filter.config import load_pocket_config
 from legacy_hand_to_body import evaluate_legacy
 from pocket_filter.action_policy import evaluate_pocket_with_policy
+from pocket_filter.motion_intervals import lookup_motion_interval, load_motion_interval_catalog
 from pocket_filter.mix_backend import evaluate_pocket_mix
 from pocket_filter.score_fusion import evaluate_pocket_scores
 from pocket_filter.evaluate import evaluate_pocket
@@ -141,6 +142,13 @@ CSV_FIELDS = [
     "kin_hip_speed_norm",
     "kin_elbow_angle_deg",
     "kin_wrist_axis_dist_min",
+    "kin_near_dwell_s",
+    "kin_swing_peaks",
+    "kin_approach_depth",
+    "pocket_eval_mode",
+    "interval_t0",
+    "interval_t1",
+    "motion_peak_score",
     "hand_to_body_confidence",
     "primary_action",
     "primary_action_confidence",
@@ -389,6 +397,27 @@ def _load_aux(path: Path) -> tuple[np.ndarray | None, np.ndarray | None]:
     return row_mask, timestamps
 
 
+_MOTION_CATALOG: tuple[str, dict] | None = None
+
+
+def _motion_catalog(path: str | None) -> dict:
+    global _MOTION_CATALOG
+    if not path:
+        return {}
+    if _MOTION_CATALOG is None or _MOTION_CATALOG[0] != path:
+        _MOTION_CATALOG = (path, load_motion_interval_catalog(Path(path)))
+    return _MOTION_CATALOG[1]
+
+
+def _pocket_eval_meta() -> dict[str, str]:
+    return {
+        "pocket_eval_mode": "",
+        "interval_t0": "",
+        "interval_t1": "",
+        "motion_peak_score": "",
+    }
+
+
 def evaluate_one_clip(
     poses_path: Path,
     category: int,
@@ -396,6 +425,8 @@ def evaluate_one_clip(
     backend: str,
     config_path: str | None,
     default_height: float,
+    motion_intervals_path: str | None = None,
+    motion_min_interval_s: float = 0.35,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
     row: dict[str, Any] = {
@@ -405,6 +436,7 @@ def evaluate_one_clip(
         "session_id": session_id_from_poses_path(poses_path),
         "backend": backend,
         "error": "",
+        **_pocket_eval_meta(),
     }
     try:
         try:
@@ -585,17 +617,29 @@ def evaluate_one_clip(
         else:
             cfg_path = Path(config_path) if config_path else None
             cfg = load_pocket_config(cfg_path)
-            result = evaluate_pocket_with_policy(
-                poses,
-                fps=fps,
-                aspect=aspect,
-                frame_height=frame_h,
-                timestamps=timestamps,
-                row_mask=row_mask,
-                keypoint_conf=conf,
-                config=cfg,
-                config_path=cfg_path,
-            )
+            catalog = _motion_catalog(motion_intervals_path)
+            motion_iv = lookup_motion_interval(poses_path, catalog)
+            eval_kwargs: dict[str, Any] = {
+                "fps": fps,
+                "aspect": aspect,
+                "frame_height": frame_h,
+                "timestamps": timestamps,
+                "row_mask": row_mask,
+                "keypoint_conf": conf,
+                "config": cfg,
+                "config_path": cfg_path,
+            }
+            if motion_iv is not None and motion_iv.duration_s() >= motion_min_interval_s:
+                eval_kwargs["interval_s"] = (motion_iv.t0, motion_iv.t1)
+                eval_kwargs["use_temporal"] = False
+                row["pocket_eval_mode"] = "motion_interval"
+                row["interval_t0"] = round(motion_iv.t0, 4)
+                row["interval_t1"] = round(motion_iv.t1, 4)
+                if motion_iv.score is not None:
+                    row["motion_peak_score"] = round(motion_iv.score, 4)
+            else:
+                row["pocket_eval_mode"] = "temporal"
+            result = evaluate_pocket_with_policy(poses, **eval_kwargs)
             ht = bool(result.hand_to_body)
             ht_raw = bool(result.hand_to_body_raw)
             exp_s, match_s, audit = audit_row(category, ht)
@@ -675,10 +719,18 @@ def evaluate_one_clip(
     return row
 
 
-def _worker(task: tuple[str, int, str, str, str | None, float]) -> dict[str, Any]:
-    path_s, cat, data_root_s, backend, cfg, height = task
+def _worker(
+    task: tuple[str, int, str, str, str | None, float, str | None, float],
+) -> dict[str, Any]:
+    path_s, cat, data_root_s, backend, cfg, height, motion_iv_path, motion_min_s = task
     row = evaluate_one_clip(
-        Path(path_s), cat, backend=backend, config_path=cfg, default_height=height
+        Path(path_s),
+        cat,
+        backend=backend,
+        config_path=cfg,
+        default_height=height,
+        motion_intervals_path=motion_iv_path,
+        motion_min_interval_s=motion_min_s,
     )
     row["data_root"] = data_root_s
     return row
@@ -851,9 +903,20 @@ def run_batch(
     on_progress: bool,
     progress_every: int = 0,
     phase_label: str = "EVAL",
+    motion_intervals_path: str | None = None,
+    motion_min_interval_s: float = 0.35,
 ) -> list[dict[str, Any]]:
     tasks = [
-        (str(c.path), c.category, str(c.data_root.resolve()), backend, config_path, default_height)
+        (
+            str(c.path),
+            c.category,
+            str(c.data_root.resolve()),
+            backend,
+            config_path,
+            default_height,
+            motion_intervals_path,
+            motion_min_interval_s,
+        )
         for c in clips
     ]
     rows: list[dict[str, Any]] = []
@@ -1096,10 +1159,26 @@ def main() -> None:
         default=None,
         help="Solo estas categorías (p. ej. -c 6 o -c 6 14). Escaneo completo; evalúa solo el subconjunto.",
     )
+    parser.add_argument(
+        "--motion-intervals",
+        type=Path,
+        default=None,
+        metavar="JSONL",
+        help="P0-5: JSONL con path,t0,t1[,score]; si hay hit, evalúa en intervalo (sin ventanas OR).",
+    )
+    parser.add_argument(
+        "--motion-min-interval-s",
+        type=float,
+        default=0.35,
+        help="Duración mínima del intervalo Motion para usarlo (s).",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
     cfg_path = str(args.config.resolve()) if args.config else None
+    motion_iv_path = (
+        str(args.motion_intervals.expanduser().resolve()) if args.motion_intervals else None
+    )
 
     verbose_scan = not args.no_scan_log
     if args.preflight and args.debug <= 0:
@@ -1184,6 +1263,8 @@ def main() -> None:
             on_progress=not args.quiet,
             progress_every=args.progress_every,
             phase_label="DEBUG",
+            motion_intervals_path=motion_iv_path,
+            motion_min_interval_s=args.motion_min_interval_s,
         )
         print("\n=== Tabla resultado ===\n", flush=True)
         print_debug_table(rows)
@@ -1203,6 +1284,8 @@ def main() -> None:
     if scan_s > 1.0:
         print(f"(Escaneo previo: {scan_s:.1f} s — ya contado antes del batch en esta ejecución)", flush=True)
     t0 = time.perf_counter()
+    if motion_iv_path:
+        print(f"P0-5: sidecar Motion intervals → {motion_iv_path}", flush=True)
     rows = run_batch(
         clips,
         backend=args.backend,
@@ -1212,6 +1295,8 @@ def main() -> None:
         on_progress=not args.quiet,
         progress_every=args.progress_every,
         phase_label="BATCH",
+        motion_intervals_path=motion_iv_path,
+        motion_min_interval_s=args.motion_min_interval_s,
     )
     eval_elapsed = time.perf_counter() - t0
     total_elapsed = scan_s + eval_elapsed
