@@ -1,7 +1,11 @@
 # Progreso calibración `hand_to_body` (pocket v2 + política)
 
-**Última actualización:** 2026-03-20 (sesión agente).  
+**Última actualización:** 2026-11-21 (sesión agente).  
 **Objetivo:** recordar qué se probó, métricas y cómo volver atrás.
+
+> **Baseline producción congelada (G+H):** ver [`HAND_TO_BODY_BASELINE_PRODUCCION.md`](HAND_TO_BODY_BASELINE_PRODUCCION.md).  
+> Config copia: `har/pocket_filter_config.BASELINE_PRODUCCION_H.json`.  
+> CSV referencia: `gate_temporal.csv` — cat **6: 3521/4192**, cat **0 FP: 434**.
 
 ---
 
@@ -16,7 +20,8 @@
 | **E** | HAR1 cotidiano + resumen `har2_test` | `detect_cotidian_actions`, `htb_tier`, `accion_recomendada` |
 | **F** | **`htb_tier`**: `alert` / `review` / `none` | `action_policy.py` |
 | **G** | **`gate_mode: robbery_confirm`** — filtro motion + `motion_suppress` | |
-| **H** (actual) | **Ventanas 2,5 s / paso 1,25 s** en chunks ~8 s | `temporal_eval.py`, fusiona pico `hand_to_body` / `raw` |
+| **H** | **Ventanas 2,5 s / paso 1,25 s** en chunks ~8 s | `temporal_eval.py` |
+| **G+H** ★ **baseline prod** | Temporal + `robbery_confirm` + `motion_suppress` | Ver `HAND_TO_BODY_BASELINE_PRODUCCION.md` |
 
 ---
 
@@ -30,6 +35,8 @@ Dataset grande: `/media/8TB/DatosEntrenamiento/datos_limpios_triton/data_result`
 | Política v1 | 49 % | 51 % | **20 %** FP (921) | conf fija 0.62 |
 | Política v2 | **80 %** (3359/4192) | 80 % | **28 %** FP (1278) | walk/stop |
 | FN cat 6 v2 | 235 pocket miss + **598** política (`raw=true`) | | | `pocket_all_policy_v2.csv` |
+| **G+H temporal** ★ | **84 %** (3521/4192) | **83 %** (334/401) | **434** (9,4 %) | `gate_temporal.csv` |
+| G sin ventanas | 70 % (2925) | 75 % (299) | **164** (3,5 %) | `gate_robbery_v2.csv` |
 
 Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra distinta)
 
@@ -42,19 +49,13 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ## Cómo volver atrás
 
-1. **Filtro robo (actual):** `"gate_mode": "robbery_confirm"` en `action_policy`.
-2. **Modo anterior (tiers + walk):** `"gate_mode": "full"`.
-3. **Solo pocket (sin política)** — en `pocket_filter_config.json`:
-   ```json
-   "action_policy": { "enabled": false }
-   ```
-   El batch seguirá evaluando pero `hand_to_body` = pocket COMPATIBLE.
+**Detalle completo y métricas congeladas:** [`HAND_TO_BODY_BASELINE_PRODUCCION.md`](HAND_TO_BODY_BASELINE_PRODUCCION.md).
 
-2. **Sin eje torso** — `enable_axis_body_approach: false` (recall 6 baja, FP bajan).
-
-3. **Git:** `git log --oneline har/pocket_filter/` y revert del commit concreto; no tocar datos en 8TB.
-
-4. **CSV columnas nuevas:** `hand_to_body_raw`, `hand_to_body_confidence`, `primary_action`, `htb_tier` — ignorables si consumes solo `hand_to_body`.
+1. **Restaurar config baseline:** `cp har/pocket_filter_config.BASELINE_PRODUCCION_H.json har/pocket_filter_config.json`
+2. **Solo quitar ventanas:** `"temporal": { "enabled": false }` → métricas ~`gate_robbery_v2.csv`
+3. **Política antigua:** `"gate_mode": "full"`
+4. **Sin política:** `"action_policy": { "enabled": false }` → pocket puro
+5. **Git:** `git log --oneline har/pocket_filter/` + checkout selectivo si hace falta
 
 ---
 
@@ -90,11 +91,10 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ---
 
-## Próximo experimento (F)
+## Próximos experimentos (sin tocar baseline sin re-barrido)
 
-- Barrido completo con `htb_tier` en CSV.
-- Medir: TP si `hand_to_body OR htb_tier=review` en cat 6; FP en 0 solo `alert`.
-- Ajustar `review_min_confidence`, `review_axis_min` en `action_policy`.
+- Afinar FP cat 0 con ventana+walk (manteniendo G+H como referencia).
+- Medir `hand_to_body_raw` en cat 6 en CSV para recall “gesto en pose”.
 
 ---
 
