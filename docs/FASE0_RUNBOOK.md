@@ -201,3 +201,9 @@ cp pocket_filter_config.BASELINE_PRODUCCION_H.json pocket_filter_config.json
 ```
 
 Comparar cat 6 TP/FN y cat 0 FP vs `fase2_10pct.csv`.
+
+**Resultado medido 2026-11-21 (10 %):** cat 6 **352→362** (+10 FN 67→57); cat 0 FP **58→107** (+49); cat 5 FP **45→98**. **NO adoptar** como baseline; contacto en marcha sube confirmaciones en pasillo.
+
+### Fase 2-b — resultado heurística
+
+`review_priority` actual: recall pos **4 % @50**, **71 % @500**, precisión **~8 %** global. Pasillo comparte motivos/confianza con FN. Siguiente: `tune_review_triage.py` y/o score C2; no SAM top-50 con reglas solas.
