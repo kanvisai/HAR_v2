@@ -133,6 +133,14 @@ Ver sección **“Suite de pruebas y log”** al final de este archivo (actualiz
 
 Ejecutar en el servidor (tras `git pull`):
 
+Barrido rápido (~10% por categoría, indicativo):
+
+```bash
+.venv/bin/python3 batch_data_result.py .../data_result --sample-frac 0.1 \
+  --backend v2 -o /tmp/gate_10pct.csv --workers 50 --seed 42
+.venv/bin/python3 audit_pocket_csv.py /tmp/gate_10pct.csv
+```
+
 ```bash
 cd ~/kanvis/piloto_v1/HAR_v2/har
 LOG=/tmp/har_progress_$(date +%Y%m%d_%H%M%S).log

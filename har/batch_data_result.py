@@ -13,6 +13,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --debug 20 --csv /tmp/legacy.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --backend mix -o /tmp/mix.csv --workers 50
   .venv/bin/python3 batch_data_result.py /path/data_result --category 6 --backend v2 -o cat6_v2.csv
+  .venv/bin/python3 batch_data_result.py /path/data_result --sample-frac 0.1 --backend mix -o /tmp/mix_10pct.csv
 """
 from __future__ import annotations
 
@@ -140,6 +141,53 @@ def filter_clips_by_category(
     if not categories:
         return clips
     return [c for c in clips if c.category in categories]
+
+
+def stratified_sample_clips(
+    clips: list[ClipRef],
+    frac: float,
+    *,
+    seed: int,
+    min_per_cat: int = 1,
+) -> list[ClipRef]:
+    """~frac de clips por categoría (mínimo min_per_cat si hay datos). Reproducible con seed."""
+    if frac <= 0:
+        return clips
+    if frac >= 1.0:
+        return clips
+    by_cat: dict[int, list[ClipRef]] = {}
+    for clip in clips:
+        by_cat.setdefault(clip.category, []).append(clip)
+    rng = random.Random(seed)
+    sampled: list[ClipRef] = []
+    for cat in sorted(by_cat):
+        pool = by_cat[cat]
+        n = min(len(pool), max(min_per_cat, int(round(len(pool) * frac))))
+        if n >= len(pool):
+            sampled.extend(pool)
+        else:
+            sampled.extend(rng.sample(pool, n))
+    sampled.sort(key=lambda c: (str(c.data_root), c.category, str(c.path)))
+    return sampled
+
+
+def _print_stratified_sample_report(before: list[ClipRef], after: list[ClipRef], frac: float) -> None:
+    print(
+        f"\n=== Muestra estratificada: {frac * 100:.1f}% por categoría ===\n",
+        flush=True,
+    )
+    before_c = Counter(c.category for c in before)
+    after_c = Counter(c.category for c in after)
+    for cat in sorted(before_c):
+        print(
+            f"  cat {cat:2d}: {after_c.get(cat, 0):5d} / {before_c[cat]:5d}",
+            flush=True,
+        )
+    print(
+        f"\nTotal: {len(after)} / {len(before)} clips "
+        f"(métricas de auditoría orientativas, no extrapolación automática)\n",
+        flush=True,
+    )
 
 
 def discover_clips(
@@ -822,6 +870,14 @@ def main() -> None:
     parser.add_argument("--height", type=float, default=1080.0)
     parser.add_argument("--seed", type=int, default=42, help="Semilla para muestras aleatorias")
     parser.add_argument(
+        "--sample-frac",
+        type=float,
+        default=0.0,
+        metavar="F",
+        help="Evalúa F×100%% de clips **por categoría** (p. ej. 0.1 ≈ 10%%). Requiere al menos 1 clip/cat. "
+        "Indicativo; mucho más rápido que barrido completo.",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Sin heartbeat de escaneo ni barra de progreso en evaluación",
@@ -891,6 +947,15 @@ def main() -> None:
     if not clips and not args.preflight:
         roots_s = ", ".join(str(r) for r in args.data_roots)
         raise SystemExit(f"No se encontraron poses_full.npy bajo user_* en: {roots_s}")
+
+    clips_full = clips
+    if args.sample_frac > 0:
+        if not (0 < args.sample_frac < 1.0):
+            raise SystemExit("--sample-frac debe estar entre 0 y 1 (exclusivo), p. ej. 0.1")
+        clips = stratified_sample_clips(
+            clips, args.sample_frac, seed=args.seed, min_per_cat=1
+        )
+        _print_stratified_sample_report(clips_full, clips, args.sample_frac)
 
     if args.preflight and args.debug <= 0:
         preflight_report(

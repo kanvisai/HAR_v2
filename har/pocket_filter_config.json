@@ -71,7 +71,9 @@
     "v2_clear_trust_confidence": 0.80,
     "cotidian_override_min_confidence": 0.80,
     "legacy_veto_when_low_conf": true,
-    "legacy_agree_promotes_clear": true
+    "legacy_agree_promotes_clear": true,
+    "legacy_veto_weak_motives_only": true,
+    "approx_clear_min_confidence": 0.52
   },
   "context_guard": {
     "enabled": false,

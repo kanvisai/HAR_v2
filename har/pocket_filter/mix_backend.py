@@ -23,6 +23,9 @@ from pocket_filter.config import CONFIG_PATH, PocketConfig, load_pocket_config
 from pocket_filter.types import PocketResult
 
 _DEFAULT_OVERRIDE_ACTIONS = frozenset({"walk", "stop", "arm_swing", "carry", "hand_up", "turn_torso"})
+_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
+_APPROX_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
+_WEAK_MOTIVES = frozenset({"ACERCAMIENTO_EJE_TORSO"})
 
 
 @dataclass
@@ -33,6 +36,8 @@ class MixBackendConfig:
     cotidian_min_visible_frac: float = 0.08
     legacy_agree_promotes_clear: bool = True
     legacy_veto_when_low_conf: bool = True
+    legacy_veto_weak_motives_only: bool = True
+    approx_clear_min_confidence: float = 0.52
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,15 @@ def _cotidian_peak(
     return best_id, round(best_conf, 4)
 
 
+def _v2_policy_clear_trusted(motivo: str, conf: float, mcfg: MixBackendConfig) -> bool:
+    """Robos: la política v2 ya filtró; no tumbar claro con legacy en contacto/aprox."""
+    if motivo in _STRONG_MOTIVES:
+        return True
+    if motivo in _APPROX_MOTIVES and conf >= mcfg.approx_clear_min_confidence:
+        return True
+    return False
+
+
 def fuse_mix_verdict(
     v2: PocketResult,
     *,
@@ -91,6 +105,17 @@ def fuse_mix_verdict(
     v2_conf = float(v2.hand_to_body_confidence)
     v2_clear = bool(v2.hand_to_body)
     v2_raw = bool(v2.hand_to_body_raw)
+    motivo = v2.motivo.split("|", 1)[0]
+
+    if v2_clear and _v2_policy_clear_trusted(motivo, v2_conf, mcfg):
+        return MixFusion(
+            hand_to_body=True,
+            motion_suppress=bool(v2.motion_suppress),
+            mix_rule="MIX_V2_TRUST_POLICY",
+            legacy_hand_to_body=legacy_htb,
+            cotidian_action=cotidian_id,
+            cotidian_confidence=cotidian_conf,
+        )
 
     if v2_clear and v2_conf >= mcfg.v2_clear_trust_confidence:
         return MixFusion(
@@ -103,6 +128,11 @@ def fuse_mix_verdict(
         )
 
     if v2_clear and v2_conf < mcfg.v2_clear_trust_confidence:
+        weak_only = mcfg.legacy_veto_weak_motives_only
+        is_weak = motivo in _WEAK_MOTIVES or (
+            weak_only and motivo not in _STRONG_MOTIVES | _APPROX_MOTIVES
+        )
+
         if mcfg.legacy_agree_promotes_clear and legacy_htb:
             return MixFusion(
                 hand_to_body=True,
@@ -113,7 +143,8 @@ def fuse_mix_verdict(
                 cotidian_confidence=cotidian_conf,
             )
         if (
-            cotidian_id in _DEFAULT_OVERRIDE_ACTIONS
+            is_weak
+            and cotidian_id in _DEFAULT_OVERRIDE_ACTIONS
             and cotidian_conf >= mcfg.cotidian_override_min_confidence
             and cotidian_conf > v2_conf
         ):
@@ -126,7 +157,7 @@ def fuse_mix_verdict(
                 cotidian_action=cotidian_id,
                 cotidian_confidence=cotidian_conf,
             )
-        if mcfg.legacy_veto_when_low_conf and not legacy_htb:
+        if mcfg.legacy_veto_when_low_conf and is_weak and not legacy_htb:
             suppress = not v2_raw
             return MixFusion(
                 hand_to_body=False,
