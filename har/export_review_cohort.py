@@ -13,10 +13,12 @@ from collections import Counter
 from pathlib import Path
 
 from fase0_pocket_audit import _orch_branch_doctrine
+from review_triage import review_priority_score
 
 OUT_FIELDS = [
     "cohort",
     "orch_action",
+    "review_priority",
     "category",
     "path",
     "resultado",
@@ -80,9 +82,21 @@ def main() -> None:
         name = _cohort_name(r)
         if not name:
             continue
-        out = {k: r.get(k, "") for k in OUT_FIELDS if k != "cohort" and k != "orch_action"}
+        out = {
+            k: r.get(k, "")
+            for k in OUT_FIELDS
+            if k not in ("cohort", "orch_action", "review_priority")
+        }
         out["cohort"] = name
         out["orch_action"] = _orch_branch_doctrine(r)
+        out["review_priority"] = str(
+            review_priority_score(
+                r.get("motivo", ""),
+                float(r.get("hand_to_body_confidence") or 0),
+                float(r.get("ctx_walk_frac") or 0),
+                stop_frac=float(r.get("ctx_stop_frac") or 0),
+            )
+        )
         buckets.setdefault(name, []).append(out)
         counts[name] += 1
 

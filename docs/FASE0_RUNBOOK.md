@@ -178,4 +178,26 @@ Re-batch opcional (añade `session_id` al CSV; no cambia métricas):
 head -1 /tmp/fase2_10pct.csv   # debe incluir session_id
 ```
 
-Siguiente código: reglas **motivo-condicional** en `review_triage` o sklearn logistic sobre `all_cohorts.csv` (split por `session_id`).
+### Fase 2-b — separación cola REVIEW (P1-6 prep)
+
+```bash
+git pull
+.venv/bin/python3 export_review_cohort.py /tmp/fase2_10pct.csv -o /tmp/cohorts2/
+.venv/bin/python3 analyze_review_separation.py /tmp/cohorts2/all_cohorts.csv
+```
+
+**Pásame:** tabla `top_K | pos_in_top | recall_pos | prec_pos`.
+
+Interpretación de cohortes (tu corrida): **45 FN** → **30 eje**, **35/45 marcha**; no relajar eje en marcha sin cola.
+
+### Fase 2-c — experimento contacto en marcha (opcional)
+
+```bash
+cp pocket_filter_config.PRUEBA_CONTACT_WALK_055.json pocket_filter_config.json
+.venv/bin/python3 batch_data_result.py "$DATA" --backend v2 \
+  --sample-frac 0.10 --seed 42 -o /tmp/fase2c_contact055.csv --workers 50
+.venv/bin/python3 audit_pocket_csv.py /tmp/fase2c_contact055.csv | sed -n '/cat  6/,/cat  7/p'
+cp pocket_filter_config.BASELINE_PRODUCCION_H.json pocket_filter_config.json
+```
+
+Comparar cat 6 TP/FN y cat 0 FP vs `fase2_10pct.csv`.
