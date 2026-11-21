@@ -153,8 +153,31 @@ def test_motion_suppress_no_pocket():
             "hands_away_s": 0.0,
         },
         policy=policy,
+        resultado="INCOMPATIBLE",
+        filter_fp_safe=False,
     )
     assert sup and code == "SUPPRESS_NO_POCKET"
+
+
+def test_motion_suppress_indeterminate_keeps_motion():
+    policy = ActionPolicyConfig()
+    sup, code = decide_motion_suppress(
+        pocket_compatible=False,
+        hand_to_body_clear=False,
+        motivo="EVIDENCIA_PARCIAL",
+        signals={
+            "walk_frac": 0.0,
+            "walk_s": 0.0,
+            "stop_frac": 1.0,
+            "stop_s": 1.0,
+            "hands_away_frac": 0.0,
+            "hands_away_s": 0.0,
+        },
+        policy=policy,
+        resultado="INDETERMINADO",
+    )
+    assert not sup
+    assert code == "KEEP_INDETERMINADO"
 
 
 def test_robbery_confirm_allows_axis_when_quiet():

@@ -95,10 +95,62 @@ Horas de CPU; hacerlo **después** de validar scripts en 10 %.
 
 ---
 
-## Fase siguiente (cuando digas “seguimos”)
+## Fase 0 — Veredicto (2026-11-21, muestra 10 % seed 42)
 
-1. **P0-4 ligero:** columna `session` en CSV (parse path).
-2. **P0-3:** simulador de árbol corregido en script (sin Orchestrator).
-3. **P0-5:** evaluación en `interval_s` fijo (tests) hasta tener Motion.
+| Hallazgo | Evidencia |
+|----------|-----------|
+| Baseline coherente | Cat 6 clear **84 %**, cat 0 FP **12.5 %** (escala full ~9 %) |
+| **H3 confirmado** | Cat 0 **raw 83 %** → **71 %** iría a REVIEW; no usar raw como SAM masivo |
+| **DISCARD_ELSE = 0** | Todo lo no-clear va a SUPPRESS o REVIEW; los **277 GATE_NO_POCKET** mezclan INDETERMINADO |
+| Recall recuperable | **45/67** FN cat 6 tienen raw=true (política); **20** INDETERMINADO en SUPPRESS |
+| FP no es solo cat 0 | Agregado negativas **36.8 %** clear; sin 0/5 **67.5 %** (cat 2–4 dominan) |
+| INCOMPATIBLE inútil hoy | **8** clips; `filter_fp_safe` ~0 % — no sirve como palanca FP |
 
-Cada fase tendrá su sección en este runbook.
+**Siguiente código:** **P0-3** (`action_policy`: INDETERMINADO no `motion_suppress`; `htb_tier=review` si raw∧¬clear).
+
+---
+
+## Fase 1 — P0-3 (auditorías E–G)
+
+Tras `git pull` con el cambio de política:
+
+### Paso E — Re-batch 10 % (mismos flags que Fase 0)
+
+```bash
+cp pocket_filter_config.BASELINE_PRODUCCION_H.json pocket_filter_config.json
+.venv/bin/python3 batch_data_result.py "$DATA" --backend v2 \
+  --sample-frac 0.10 --seed 42 --workers 50 -o /tmp/fase1_p03_10pct.csv
+```
+
+### Paso F — Mismas auditorías
+
+```bash
+.venv/bin/python3 audit_pocket_csv.py /tmp/fase1_p03_10pct.csv
+.venv/bin/python3 audit_htb_metrics.py /tmp/fase1_p03_10pct.csv
+.venv/bin/python3 fase0_pocket_audit.py /tmp/fase1_p03_10pct.csv -o /tmp/fase1_p03_report.txt
+.venv/bin/python3 simulate_orchestrator_policy.py /tmp/fase1_p03_10pct.csv
+```
+
+**Esperado vs Fase 0:**
+
+- `hand_to_body` / TP-FN **igual** (no cambiamos clear).
+- `htb_tier=review` ≈ clips con raw∧¬clear (p. ej. ~45 en cat 6).
+- Embudo: menos `DISCARD_SUPPRESS` por INDETERMINADO; más `KEEP_INDETERMINADO` en simulador.
+- Cat 0: ~78 clips dejarían de suprimirse por abstención (coste motion↑, doctrina OK).
+
+### Paso G — Comparación rápida (opcional)
+
+```bash
+diff -u <(grep -E 'DISCARD|KEEP|REVIEW|CONFIRM' /tmp/fase0_10pct_report.txt) \
+        <(grep -E 'DISCARD|KEEP|REVIEW|CONFIRM' /tmp/fase1_p03_report.txt) || true
+```
+
+**Pásame:** Paso F completo (audit + htb_tier en informe + salida `simulate_orchestrator_policy`).
+
+---
+
+## Fase 2 (después de Fase 1)
+
+1. **P0-4:** columna `session` en CSV.
+2. **P1-2 prep:** export motives/features para fusion sobre los 45 FN (eje/marcha).
+3. **P0-5:** intervalo Motion cuando C2 lo exporte.

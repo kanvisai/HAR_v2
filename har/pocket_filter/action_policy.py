@@ -195,16 +195,24 @@ def decide_motion_suppress(
     motivo: str,
     signals: dict[str, float],
     policy: ActionPolicyConfig,
+    resultado: str = "",
+    filter_fp_safe: bool = False,
 ) -> tuple[bool, str | None]:
     """
     ¿Suprimir alarma del modelo de robo?
     Sí solo si no hay gesto en pocket o es FP típico (gesto débil + marcha).
     Si hay pocket compatible en quieto aunque no sea ‘claro’, no suprimir (recall robos).
+    INDETERMINADO no suprime (P0-3 / doctrina Kanvis).
     """
-    if not pocket_compatible:
-        return True, "SUPPRESS_NO_POCKET"
     if hand_to_body_clear:
         return False, None
+    res = (resultado or "").strip().upper()
+    if res == "INDETERMINADO":
+        return False, "KEEP_INDETERMINADO"
+    if res == "INCOMPATIBLE" and filter_fp_safe:
+        return True, "SUPPRESS_INCOMPATIBLE"
+    if not pocket_compatible:
+        return True, "SUPPRESS_NO_POCKET"
     if _is_walking(signals, policy) and motivo in WALK_SUPPRESS_MOTIVES:
         return True, "SUPPRESS_WALK_WEAK_GESTURE"
     return False, None
@@ -308,18 +316,27 @@ def apply_action_policy(
         )
         result.hand_to_body = accept
         result.context_veto = veto
-        result.htb_tier = "alert" if accept else "none"
-        result.primary_action = "hand_to_body" if accept else "no_gesture"
-        result.primary_action_confidence = conf if accept else 0.0
+        if accept:
+            result.htb_tier = "alert"
+        elif raw:
+            result.htb_tier = "review"
+        else:
+            result.htb_tier = "none"
+        result.primary_action = "hand_to_body" if (accept or raw) else "no_gesture"
+        result.primary_action_confidence = conf if (accept or raw) else 0.0
         result.cotidian_seconds = {}
-        sup, _ = decide_motion_suppress(
+        sup, sup_code = decide_motion_suppress(
             pocket_compatible=raw,
             hand_to_body_clear=accept,
             motivo=result.motivo,
             signals=signals,
             policy=policy,
+            resultado=result.resultado,
+            filter_fp_safe=bool(result.filter_fp_safe),
         )
         result.motion_suppress = sup
+        if sup_code and not result.context_veto:
+            result.context_veto = sup_code
         return result
 
     seconds, visible = _cotidian_durations(poses, fps=fps, aspect=aspect)
@@ -347,6 +364,8 @@ def apply_action_policy(
             motivo=result.motivo,
             signals=signals,
             policy=policy,
+            resultado=result.resultado,
+            filter_fp_safe=bool(result.filter_fp_safe),
         )
         result.motion_suppress = sup
         if code and not result.context_veto:
