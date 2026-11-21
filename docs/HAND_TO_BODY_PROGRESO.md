@@ -103,7 +103,13 @@ CSV: `legacy_hand_to_body_confidence`, `hand_to_body_v2`, doble auditoría como 
 
 ---
 
-## Fase **J** — `--backend mix` (`mix_mode: v2_first`)
+## Fase **J** — `--backend mix`
+
+| `mix_mode` | Comportamiento |
+|------------|----------------|
+| **`legacy_arbitrate`** | conf &lt; 10 % → no; **[10 %, 55 %)** → legacy decide; ≥ 80 % o contacto/aprox → v2; si no eje+walk veto |
+| `v2_first` | ≈ v2 + veto eje+caminar |
+| `legacy_veto` | Antiguo (no usar en prod) |
 
 - **`hand_to_body` (fusionado)** ≈ v2; solo baja si **eje torso** claro + **walk** ≥ 80 % del clip.
 - **`hand_to_body_v2`** / **`audit_class_v2`**: referencia pura v2 en el mismo CSV.

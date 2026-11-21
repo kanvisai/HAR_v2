@@ -79,10 +79,13 @@
   },
   "mix_backend": {
     "enabled": true,
-    "mix_mode": "v2_first",
+    "mix_mode": "legacy_arbitrate",
+    "conf_reject_max": 0.10,
+    "conf_arbitrate_max": 0.55,
+    "v2_clear_trust_confidence": 0.80,
     "cotidian_override_min_confidence": 0.80,
     "weak_axis_veto_actions": ["walk"],
-    "legacy_veto_when_low_conf": false
+    "approx_clear_min_confidence": 0.52
   },
   "context_guard": {
     "enabled": false,

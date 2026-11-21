@@ -23,12 +23,19 @@ _COTIDIAN_FOR_SUPPRESS = frozenset(
     {"walk", "stop", "arm_swing", "carry", "hand_up", "turn_torso"}
 )
 _WEAK_MOTIVES = frozenset({"ACERCAMIENTO_EJE_TORSO"})
+_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
+_APPROX_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
 
 
 @dataclass
 class MixBackendConfig:
     enabled: bool = True
+    """v2_first | legacy_arbitrate | legacy_veto (antiguo)."""
     mix_mode: str = "v2_first"
+    """Por debajo: no hand_to_body (salvo legacy+raw en banda)."""
+    conf_reject_max: float = 0.10
+    """En [reject, arbitrate): legacy decide si v2 duda."""
+    conf_arbitrate_max: float = 0.55
     cotidian_override_min_confidence: float = 0.80
     cotidian_min_visible_frac: float = 0.08
     weak_axis_veto_actions: tuple[str, ...] = ("walk",)
@@ -90,6 +97,21 @@ def _motivo_base(motivo: str) -> str:
     return motivo.split("|", 1)[0].strip()
 
 
+def _v2_policy_clear_trusted(
+    motivo: str, conf: float, mcfg: MixBackendConfig
+) -> bool:
+    base = _motivo_base(motivo)
+    if base in _STRONG_MOTIVES:
+        return True
+    if base in _APPROX_MOTIVES and conf >= mcfg.approx_clear_min_confidence:
+        return True
+    return False
+
+
+def _in_arbitrate_band(conf: float, mcfg: MixBackendConfig) -> bool:
+    return mcfg.conf_reject_max <= conf < mcfg.conf_arbitrate_max
+
+
 def _weak_axis_walk_veto(
     motivo: str,
     v2_conf: float,
@@ -107,6 +129,63 @@ def _weak_axis_walk_veto(
     return cotidian_conf > v2_conf
 
 
+def _fuse_mix_legacy_arbitrate(
+    v2: PocketResult,
+    *,
+    legacy_htb: bool,
+    cotidian_id: str,
+    cotidian_conf: float,
+    mcfg: MixBackendConfig,
+) -> MixFusion:
+    v2_conf = float(v2.hand_to_body_confidence)
+    v2_clear = bool(v2.hand_to_body)
+    v2_raw = bool(v2.hand_to_body_raw)
+
+    def pack(htb: bool, sup: bool, rule: str) -> MixFusion:
+        return MixFusion(
+            hand_to_body=htb,
+            motion_suppress=sup,
+            mix_rule=rule,
+            legacy_hand_to_body=legacy_htb,
+            cotidian_action=cotidian_id,
+            cotidian_confidence=cotidian_conf,
+        )
+
+    if v2_conf < mcfg.conf_reject_max and not v2_raw:
+        return pack(False, True, "MIX_CONF_TOO_LOW")
+
+    if v2_clear and v2_conf >= mcfg.v2_clear_trust_confidence:
+        return pack(True, bool(v2.motion_suppress), "MIX_V2_HIGH")
+
+    if v2_clear and _v2_policy_clear_trusted(v2.motivo, v2_conf, mcfg):
+        return pack(True, bool(v2.motion_suppress), "MIX_V2_STRONG")
+
+    if _in_arbitrate_band(v2_conf, mcfg) or (
+        v2_conf < mcfg.conf_reject_max and v2_raw
+    ):
+        if legacy_htb:
+            return pack(True, False, "MIX_LEGACY_ARBITRATE_YES")
+        if v2_raw:
+            return pack(False, False, "MIX_LEGACY_ARBITRATE_NO_RAW")
+        return pack(False, not v2_raw, "MIX_LEGACY_ARBITRATE_NO")
+
+    if v2_clear:
+        if _weak_axis_walk_veto(v2.motivo, v2_conf, cotidian_id, cotidian_conf, mcfg):
+            return pack(False, not v2_raw, "MIX_AXIS_WALK_VETO")
+        return pack(True, bool(v2.motion_suppress), "MIX_V2_PASS")
+
+    if v2_raw:
+        return pack(False, False, "MIX_RAW_SAM_PATH")
+
+    if (
+        cotidian_id in _COTIDIAN_FOR_SUPPRESS
+        and cotidian_conf >= mcfg.cotidian_override_min_confidence
+    ):
+        return pack(False, True, f"MIX_NO_CLEAR_COTIDIAN_{cotidian_id.upper()}")
+
+    return pack(False, True, "MIX_V2_NO_CLEAR")
+
+
 def fuse_mix_verdict(
     v2: PocketResult,
     *,
@@ -115,7 +194,16 @@ def fuse_mix_verdict(
     cotidian_conf: float,
     mcfg: MixBackendConfig,
 ) -> MixFusion:
-    if mcfg.mix_mode != "v2_first":
+    mode = mcfg.mix_mode
+    if mode == "legacy_arbitrate":
+        return _fuse_mix_legacy_arbitrate(
+            v2,
+            legacy_htb=legacy_htb,
+            cotidian_id=cotidian_id,
+            cotidian_conf=cotidian_conf,
+            mcfg=mcfg,
+        )
+    if mode == "legacy_veto":
         return _fuse_mix_legacy_veto(
             v2,
             legacy_htb=legacy_htb,
@@ -163,10 +251,6 @@ def fuse_mix_verdict(
         return _base(False, True, f"MIX_NO_CLEAR_COTIDIAN_{cotidian_id.upper()}")
 
     return _base(False, True, "MIX_V2_NO_CLEAR")
-
-
-_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
-_APPROX_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
 
 
 def _fuse_mix_legacy_veto(
