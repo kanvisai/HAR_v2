@@ -12,6 +12,7 @@ Ejemplos:
   .venv/bin/python3 batch_data_result.py /path/data_result --debug 10 --csv /tmp/debug_muestra.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --backend legacy --debug 20 --csv /tmp/legacy.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --backend mix -o /tmp/mix.csv --workers 50
+  .venv/bin/python3 batch_data_result.py /path/data_result --backend scores --sample-frac 0.1 -o /tmp/scores.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --category 6 --backend v2 -o cat6_v2.csv
   .venv/bin/python3 batch_data_result.py /path/data_result --sample-frac 0.1 --backend mix -o /tmp/mix_10pct.csv
 """
@@ -39,6 +40,7 @@ from pocket_filter.config import load_pocket_config
 from legacy_hand_to_body import evaluate_legacy
 from pocket_filter.action_policy import evaluate_pocket_with_policy
 from pocket_filter.mix_backend import evaluate_pocket_mix
+from pocket_filter.score_fusion import evaluate_pocket_scores
 from pocket_filter.evaluate import evaluate_pocket
 from pocket_filter.io import load_poses_array
 
@@ -77,6 +79,7 @@ CSV_FIELDS = [
     "htb_tier",
     "motion_suppress",
     "legacy_hand_to_body",
+    "legacy_hand_to_body_confidence",
     "hand_to_body_v2",
     "audit_class_v2",
     "error",
@@ -376,8 +379,62 @@ def evaluate_one_clip(
                     "htb_tier": "",
                     "motion_suppress": "",
                     "legacy_hand_to_body": ht,
+                    "legacy_hand_to_body_confidence": round(leg.confidence, 4),
                     "hand_to_body_v2": "",
                     "audit_class_v2": "",
+                }
+            )
+        elif backend == "scores":
+            cfg_path = Path(config_path) if config_path else None
+            cfg = load_pocket_config(cfg_path)
+            result = evaluate_pocket_scores(
+                poses,
+                fps=fps,
+                aspect=aspect,
+                frame_height=frame_h,
+                timestamps=timestamps,
+                row_mask=row_mask,
+                keypoint_conf=conf,
+                config=cfg,
+                config_path=cfg_path,
+            )
+            ht = bool(result.hand_to_body)
+            ht_v2 = bool(
+                result.hand_to_body_v2 if result.hand_to_body_v2 is not None else ht
+            )
+            ht_raw = bool(result.hand_to_body_raw)
+            exp_s, match_s, audit = audit_row(category, ht)
+            _, _, audit_v2 = audit_row(category, ht_v2)
+            row.update(
+                {
+                    "elapsed_s": round(time.perf_counter() - t0, 4),
+                    "hand_to_body": ht,
+                    "resultado": result.resultado,
+                    "filter_fp_safe": bool(result.filter_fp_safe),
+                    "motivo": result.motivo,
+                    "n_frames": int(result.n_frames),
+                    "expected_hand_to_body": exp_s,
+                    "label_match": match_s,
+                    "audit_class": audit,
+                    "hand_to_body_raw": ht_raw,
+                    "context_veto": result.context_veto or "",
+                    "ctx_walk_frac": round(result.ctx_walk_frac, 4),
+                    "ctx_stop_frac": round(result.ctx_stop_frac, 4),
+                    "ctx_hands_away_frac": round(result.ctx_hands_away_frac, 4),
+                    "ctx_walk_s": round(result.ctx_walk_s, 3),
+                    "hand_to_body_confidence": round(result.hand_to_body_confidence, 4),
+                    "primary_action": result.primary_action,
+                    "primary_action_confidence": round(
+                        result.primary_action_confidence, 4
+                    ),
+                    "htb_tier": result.htb_tier,
+                    "motion_suppress": bool(result.motion_suppress),
+                    "legacy_hand_to_body": bool(result.legacy_hand_to_body),
+                    "legacy_hand_to_body_confidence": round(
+                        float(result.legacy_hand_to_body_confidence), 4
+                    ),
+                    "hand_to_body_v2": ht_v2,
+                    "audit_class_v2": audit_v2,
                 }
             )
         elif backend == "mix":
@@ -426,6 +483,9 @@ def evaluate_one_clip(
                     "htb_tier": result.htb_tier,
                     "motion_suppress": bool(result.motion_suppress),
                     "legacy_hand_to_body": bool(result.legacy_hand_to_body),
+                    "legacy_hand_to_body_confidence": round(
+                        float(result.legacy_hand_to_body_confidence), 4
+                    ),
                     "hand_to_body_v2": ht_v2,
                     "audit_class_v2": audit_v2,
                 }
@@ -472,6 +532,7 @@ def evaluate_one_clip(
                     "htb_tier": result.htb_tier,
                     "motion_suppress": bool(result.motion_suppress),
                     "legacy_hand_to_body": "",
+                    "legacy_hand_to_body_confidence": "",
                     "hand_to_body_v2": "",
                     "audit_class_v2": "",
                 }
@@ -501,6 +562,7 @@ def evaluate_one_clip(
                 "htb_tier": "",
                 "motion_suppress": "",
                 "legacy_hand_to_body": "",
+                "legacy_hand_to_body_confidence": "",
                 "hand_to_body_v2": "",
                 "audit_class_v2": "",
                 "error": str(exc),
@@ -891,9 +953,9 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=None, help="pocket_filter_config.json")
     parser.add_argument(
         "--backend",
-        choices=("v2", "legacy", "mix"),
+        choices=("v2", "legacy", "mix", "scores"),
         default="v2",
-        help="v2 = pocket_filter; legacy = HAR pasillo; mix = v2 + legacy + cotidiano si conf baja",
+        help="v2 | legacy | mix | scores (v2+legacy conf+cotidiano)",
     )
     parser.add_argument("--height", type=float, default=1080.0)
     parser.add_argument("--seed", type=int, default=42, help="Semilla para muestras aleatorias")

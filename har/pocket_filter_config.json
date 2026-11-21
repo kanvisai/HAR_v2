@@ -66,6 +66,17 @@
     "review_min_confidence": 0.48,
     "review_axis_min_confidence": 0.52
   },
+  "score_fusion": {
+    "enabled": true,
+    "confirm_clear_min_v2": 0.80,
+    "confirm_strong_min_v2": 0.55,
+    "confirm_with_legacy_min_v2": 0.50,
+    "confirm_legacy_min": 0.45,
+    "approx_strong_min_v2": 0.52,
+    "suppress_cotidian_min": 0.80,
+    "suppress_v2_below": 0.55,
+    "suppress_legacy_below": 0.35
+  },
   "mix_backend": {
     "enabled": true,
     "mix_mode": "v2_first",

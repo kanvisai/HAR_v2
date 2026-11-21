@@ -313,6 +313,7 @@ def evaluate_pocket_mix(
 
     v2.hand_to_body_raw = raw_v2
     v2.legacy_hand_to_body = legacy.hand_to_body
+    v2.legacy_hand_to_body_confidence = legacy.confidence
     v2.hand_to_body = fused.hand_to_body
     v2.motion_suppress = fused.motion_suppress
     if fused.mix_rule.startswith("MIX_"):

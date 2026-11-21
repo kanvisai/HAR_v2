@@ -12,7 +12,7 @@
 - Prototipo nuevo: `har/pocket_filter/` + `har/har2_test.py`.
 - Integración Kanvis: Orchestrator (`har_premodel`, `har_robbery_review`, `har_sam3_gate`) y contrato de poses C1 (`poses_full.npy` 8 KP, COCO 5–12).
 
----
+--- 
 
 ## 0. Contexto de producto Kanvis (lectura obligatoria)
 

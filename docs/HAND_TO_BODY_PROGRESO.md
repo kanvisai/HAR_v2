@@ -91,6 +91,18 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ---
 
+## Fase **K** — `--backend scores` (legacyv2 + v2 + cotidiano)
+
+`legacy_hand_to_body_confidence` (duración + far/close). Reglas en `score_fusion` del JSON.
+CSV: `legacy_hand_to_body_confidence`, `hand_to_body_v2`, doble auditoría como mix.
+
+```bash
+.venv/bin/python3 batch_data_result.py ... --backend scores \
+  --sample-frac 0.1 --seed 42 -o /tmp/scores_10.csv
+```
+
+---
+
 ## Fase **J** — `--backend mix` (`mix_mode: v2_first`)
 
 - **`hand_to_body` (fusionado)** ≈ v2; solo baja si **eje torso** claro + **walk** ≥ 80 % del clip.
