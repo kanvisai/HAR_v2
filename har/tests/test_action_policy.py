@@ -159,6 +159,42 @@ def test_motion_suppress_no_pocket():
     assert sup and code == "SUPPRESS_NO_POCKET"
 
 
+def test_kin_gate_contact_quiet_while_walking():
+    policy = ActionPolicyConfig(
+        gate_mode="robbery_confirm",
+        kin_gate_enabled=True,
+        kin_contact_max_hip_speed=0.52,
+        kin_contact_walk_conf_min=0.55,
+        gate_contact_min_confidence_while_walking=0.62,
+    )
+    walking = {
+        "walk_frac": 0.55,
+        "walk_s": 2.0,
+        "stop_frac": 0.1,
+        "stop_s": 0.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, _ = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.56,
+        motivo="CONTACTO_BOLSILLO",
+        signals=walking,
+        policy=policy,
+        kin_hip_speed_norm=0.40,
+    )
+    assert ok
+    ok2, veto = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.56,
+        motivo="CONTACTO_BOLSILLO",
+        signals=walking,
+        policy=policy,
+        kin_hip_speed_norm=0.70,
+    )
+    assert not ok2
+
+
 def test_motion_suppress_indeterminate_keeps_motion():
     policy = ActionPolicyConfig()
     sup, code = decide_motion_suppress(

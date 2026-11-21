@@ -58,6 +58,7 @@ class PocketResult:
     htb_tier: HtbTier = "none"
     """Frenar candidato del modelo de robo (FP): sin pocket o pasillo caminando débil."""
     motion_suppress: bool = False
+    kin_hip_speed_norm: float = 0.0
 
     @property
     def accion_propuesta(self) -> str:

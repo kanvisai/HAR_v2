@@ -60,6 +60,10 @@ class ActionPolicyConfig:
     axis_max_tier: str = "review"
     review_min_confidence: float = 0.48
     review_axis_min_confidence: float = 0.52
+    kin_gate_enabled: bool = False
+    """CONTACTO en marcha: confirmar solo si cadera lenta (hip_speed_norm ≤ umbral)."""
+    kin_contact_max_hip_speed: float = 0.52
+    kin_contact_walk_conf_min: float = 0.55
 
 
 def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
@@ -150,6 +154,7 @@ def decide_robbery_confirm(
     motivo: str,
     signals: dict[str, float],
     policy: ActionPolicyConfig,
+    kin_hip_speed_norm: float = 0.0,
 ) -> tuple[bool, str | None]:
     """
     Confirmación binaria para candidatos del modelo de robo (sin clasificar pasillo).
@@ -163,6 +168,13 @@ def decide_robbery_confirm(
         need = policy.strong_min_confidence
         if walking:
             need = max(need, policy.gate_contact_min_confidence_while_walking)
+            if (
+                policy.kin_gate_enabled
+                and kin_hip_speed_norm > 0
+                and kin_hip_speed_norm <= policy.kin_contact_max_hip_speed
+                and conf >= policy.kin_contact_walk_conf_min
+            ):
+                return True, None
         if conf >= need:
             return True, None
         return False, "GATE_LOW_CONFIDENCE"
@@ -273,12 +285,31 @@ def apply_action_policy(
     *,
     fps: float,
     aspect: float,
+    frame_height: float = 1080.0,
+    timestamps: np.ndarray | None = None,
+    row_mask: np.ndarray | None = None,
+    keypoint_conf: np.ndarray | None = None,
     pocket_cfg: PocketConfig | None = None,
     policy: ActionPolicyConfig | None = None,
     config_path: Path | None = None,
 ) -> PocketResult:
     pocket_cfg = pocket_cfg or load_pocket_config(config_path)
     policy = policy or load_action_policy_config(config_path)
+
+    from pocket_filter.kinematics import compute_clip_kinematics
+
+    kin = compute_clip_kinematics(
+        poses,
+        result=result,
+        fps=fps,
+        aspect=aspect,
+        frame_height=frame_height,
+        cfg=pocket_cfg,
+        timestamps=timestamps,
+        row_mask=row_mask,
+        keypoint_conf=keypoint_conf,
+    )
+    result.kin_hip_speed_norm = kin.hip_speed_norm
 
     result.hand_to_body_raw = result.hand_to_body
     conf = pocket_hand_to_body_confidence(result, pocket_cfg)
@@ -313,6 +344,7 @@ def apply_action_policy(
             motivo=result.motivo,
             signals=signals,
             policy=policy,
+            kin_hip_speed_norm=result.kin_hip_speed_norm,
         )
         result.hand_to_body = accept
         result.context_veto = veto
@@ -463,5 +495,14 @@ def evaluate_pocket_with_policy(
         context_pad_s=context_pad_s,
     )
     return apply_action_policy(
-        result, poses, fps=fps, aspect=aspect, pocket_cfg=config, config_path=config_path
+        result,
+        poses,
+        fps=fps,
+        aspect=aspect,
+        frame_height=frame_height,
+        timestamps=timestamps,
+        row_mask=row_mask,
+        keypoint_conf=keypoint_conf,
+        pocket_cfg=config,
+        config_path=config_path,
     )

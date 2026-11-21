@@ -206,7 +206,16 @@ def evaluate_pocket_temporal(
     wins = sliding_windows(clip_s, window_s=tcfg.window_s, step_s=tcfg.step_s)
     if len(wins) <= 1 and clip_s <= tcfg.window_s * 1.1:
         return apply_action_policy(
-            full, poses, fps=fps, aspect=aspect, pocket_cfg=cfg, config_path=config_path
+            full,
+            poses,
+            fps=fps,
+            aspect=aspect,
+            frame_height=frame_height,
+            timestamps=timestamps,
+            row_mask=row_mask,
+            keypoint_conf=keypoint_conf,
+            pocket_cfg=cfg,
+            config_path=config_path,
         )
 
     evaluated: list[tuple[tuple[float, float], PocketResult]] = []
@@ -229,6 +238,10 @@ def evaluate_pocket_temporal(
             poses,
             fps=fps,
             aspect=aspect,
+            frame_height=frame_height,
+            timestamps=timestamps,
+            row_mask=row_mask,
+            keypoint_conf=keypoint_conf,
             pocket_cfg=cfg,
             config_path=config_path,
         )
