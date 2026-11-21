@@ -131,12 +131,17 @@ cp pocket_filter_config.BASELINE_PRODUCCION_H.json pocket_filter_config.json
 .venv/bin/python3 simulate_orchestrator_policy.py /tmp/fase1_p03_10pct.csv
 ```
 
-**Esperado vs Fase 0:**
+**Validado 2026-11-21 (tu corrida):**
 
-- `hand_to_body` / TP-FN **igual** (no cambiamos clear).
-- `htb_tier=review` ≈ clips con raw∧¬clear (p. ej. ~45 en cat 6).
-- Embudo: menos `DISCARD_SUPPRESS` por INDETERMINADO; más `KEEP_INDETERMINADO` en simulador.
-- Cat 0: ~78 clips dejarían de suprimirse por abstención (coste motion↑, doctrina OK).
+| Check | Fase 0 | Fase 1 P0-3 |
+|-------|--------|-------------|
+| Cat 6 clear | 352/419 | **igual** |
+| Cat 0 FP clear | 58 | **igual** |
+| `motion_suppress` | 278 (11.7 %) | **9 (0.4 %)** |
+| `htb_tier=review` | 0 | **1003** |
+| Embudo doctrina cat 6 | 22 SUPPRESS | **20 KEEP_INDETERMINADO** + 45 REVIEW + 352 CONFIRM |
+
+El informe mostraba `DISCARD_ELSE` porque el árbol **legado** sigue marcando INDETERMINADO como descarte; en Kanvis usar **doctrina P0-3** (`KEEP_INDETERMINADO`). Tras `git pull`, `fase0_pocket_audit` §5 ya imprime doctrina.
 
 ### Paso G — Comparación rápida (opcional)
 

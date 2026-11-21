@@ -26,14 +26,32 @@ def _bool(s: str) -> bool:
     return str(s).strip().lower() in ("true", "1", "yes")
 
 
-def _orch_branch(r: dict[str, str]) -> str:
-    """Árbol documentado en STATUS Apéndice G (simplificado)."""
+def _orch_branch_legacy(r: dict[str, str]) -> str:
+    """Árbol STATUS Ap.G original (else descarta INDETERMINADO)."""
     if _bool(r.get("motion_suppress", "")):
         return "DISCARD_SUPPRESS"
     if _bool(r.get("hand_to_body", "")):
         return "CONFIRM"
     if _bool(r.get("hand_to_body_raw", "")):
         return "REVIEW_RAW"
+    return "DISCARD_ELSE"
+
+
+def _orch_branch_doctrine(r: dict[str, str]) -> str:
+    """P0-3: motion_suppress del CSV; INDETERMINADO → no descartar (KEEP)."""
+    if _bool(r.get("motion_suppress", "")):
+        return "DISCARD_SUPPRESS"
+    if _bool(r.get("hand_to_body", "")):
+        return "CONFIRM"
+    if _bool(r.get("hand_to_body_raw", "")):
+        return "REVIEW_RAW"
+    res = (r.get("resultado") or "").strip().upper()
+    if res == "INDETERMINADO":
+        return "KEEP_INDETERMINADO"
+    if res == "INCOMPATIBLE":
+        if _bool(r.get("filter_fp_safe", "")):
+            return "DISCARD_INCOMPATIBLE"
+        return "KEEP_INCOMPATIBLE_WEAK"
     return "DISCARD_ELSE"
 
 
@@ -112,7 +130,7 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
                 f"  Sin cat 0/5: FP={fp_ex}/{len(ex_05)} ({100 * fp_ex / len(ex_05):.1f}%)"
             )
 
-    _print_section(lines, "5. Embudo Orchestrator (Ap.G) — global y cat 0/6")
+    _print_section(lines, "5. Embudo Orchestrator — doctrina P0-3 (usar en Kanvis)")
     for label, cats in (
         ("GLOBAL (etiquetadas)", LABELED),
         ("cat 0", {0}),
@@ -120,14 +138,24 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
         ("cat 14", {14}),
     ):
         subset = [r for r in ok if int(r["category"]) in cats]
-        funnel: Counter[str] = Counter(_orch_branch(r) for r in subset)
+        funnel: Counter[str] = Counter(_orch_branch_doctrine(r) for r in subset)
         n = len(subset) or 1
         parts = " | ".join(f"{k}={v} ({100 * v / n:.1f}%)" for k, v in funnel.most_common())
         lines.append(f"  {label}: n={len(subset)} → {parts}")
 
-    _print_section(lines, "6. DISCARD_ELSE — desglose por resultado pocket")
+    _print_section(lines, "5b. Embudo legado (Ap.G con else=DISCARD) — solo referencia")
+    for label, cats in (("cat 6", {6}),):
+        subset = [r for r in ok if int(r["category"]) in cats]
+        funnel = Counter(_orch_branch_legacy(r) for r in subset)
+        n = len(subset) or 1
+        parts = " | ".join(f"{k}={v} ({100 * v / n:.1f}%)" for k, v in funnel.most_common())
+        lines.append(f"  {label}: n={len(subset)} → {parts}")
+
+    _print_section(lines, "6. DISCARD_ELSE (árbol legado) — desglose")
     else_rows = [
-        r for r in ok if int(r["category"]) in LABELED and _orch_branch(r) == "DISCARD_ELSE"
+        r
+        for r in ok
+        if int(r["category"]) in LABELED and _orch_branch_legacy(r) == "DISCARD_ELSE"
     ]
     by_res = Counter((r.get("resultado") or "").strip() or "(vacío)" for r in else_rows)
     lines.append(f"  n={len(else_rows)}: {dict(by_res.most_common())}")
@@ -138,8 +166,8 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
         cr = Counter((r.get("resultado") or "").strip() or "(vacío)" for r in sub)
         lines.append(f"    cat {cat} DISCARD_ELSE: {dict(cr.most_common())}")
 
-    _print_section(lines, "7. DISCARD_SUPPRESS — motivos (context_veto / resultado)")
-    sup_rows = [r for r in ok if _orch_branch(r) == "DISCARD_SUPPRESS"]
+    _print_section(lines, "7. DISCARD_SUPPRESS — motivos (context_veto)")
+    sup_rows = [r for r in ok if _orch_branch_doctrine(r) == "DISCARD_SUPPRESS"]
     veto = Counter((r.get("context_veto") or "").strip() or "(vacío)" for r in sup_rows)
     lines.append(f"  n={len(sup_rows)} context_veto top: {veto.most_common(8)}")
 
