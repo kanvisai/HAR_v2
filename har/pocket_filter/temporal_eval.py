@@ -20,12 +20,21 @@ from pocket_filter.types import PocketResult
 _VERDICT_RANK = {"COMPATIBLE": 2, "INDETERMINADO": 1, "INCOMPATIBLE": 0}
 
 
+_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
+_AXIS_APPROX = frozenset({"ACERCAMIENTO_EJE_TORSO", "APROXIMACION_OBSERVADA"})
+
+
 @dataclass
 class TemporalConfig:
     enabled: bool = True
     window_s: float = 2.5
     step_s: float = 1.25
     context_pad_s: float = 0.35
+    """Si true, al fusionar ventanas vetamos confirmaciones con marcha en la ventana ganadora."""
+    walk_gate_enabled: bool = False
+    walk_gate_window_frac: float = 0.38
+    walk_gate_window_min_s: float = 0.85
+    walk_gate_contact_min_confidence: float = 0.64
 
 
 def load_temporal_config(path: Path | None = None) -> TemporalConfig:
@@ -72,14 +81,57 @@ def _window_score(r: PocketResult) -> tuple:
     )
 
 
+def _temporal_walk_gate_veto(r: PocketResult, tcfg: TemporalConfig) -> str | None:
+    """Veto en ventana ganadora con marcha (hueco entre política 0,44 y pasillo real ~0,38)."""
+    if not tcfg.walk_gate_enabled:
+        return None
+    if (
+        r.ctx_walk_frac < tcfg.walk_gate_window_frac
+        or r.ctx_walk_s < tcfg.walk_gate_window_min_s
+    ):
+        return None
+    if r.motivo in _STRONG_MOTIVES:
+        if r.hand_to_body_confidence >= tcfg.walk_gate_contact_min_confidence:
+            return None
+        return "TEMPORAL_WALK_GATE"
+    if r.motivo in _AXIS_APPROX:
+        return "TEMPORAL_WALK_GATE"
+    return None
+
+
+def _best_clear_window(
+    windows: list[tuple[tuple[float, float], PocketResult]],
+    tcfg: TemporalConfig,
+) -> tuple[bool, tuple[float, float] | None, PocketResult | None, str | None]:
+    """
+    Elige la mejor ventana que confirme hand_to_body y pasa walk_gate.
+    Si todas las confirmaciones caen por marcha, hand_to_body queda false.
+    """
+    clears = [(iv, r) for iv, r in windows if r.hand_to_body]
+    if not clears:
+        return False, None, None, None
+    ranked = sorted(clears, key=lambda x: _window_score(x[1]), reverse=True)
+    for iv, r in ranked:
+        veto = _temporal_walk_gate_veto(r, tcfg)
+        if veto is None:
+            return True, iv, r, None
+    iv, r = ranked[0]
+    return False, iv, r, _temporal_walk_gate_veto(r, tcfg) or "TEMPORAL_WALK_GATE"
+
+
 def _merge_results(
     full: PocketResult,
     windows: list[tuple[tuple[float, float], PocketResult]],
+    *,
+    tcfg: TemporalConfig | None = None,
 ) -> PocketResult:
+    tcfg = tcfg or TemporalConfig()
     ranked = sorted(windows, key=lambda x: _window_score(x[1]), reverse=True)
     best_iv, best = ranked[0]
 
-    any_clear = any(r.hand_to_body for _, r in windows)
+    any_clear_raw = any(r.hand_to_body for _, r in windows)
+    accepted, clear_iv, clear_r, walk_veto = _best_clear_window(windows, tcfg)
+    any_clear = accepted if tcfg.walk_gate_enabled else any_clear_raw
     any_raw = any(bool(r.hand_to_body_raw) for _, r in windows)
     max_conf = max(r.hand_to_body_confidence for _, r in windows)
 
@@ -90,24 +142,31 @@ def _merge_results(
     if any_clear or any_raw:
         full.motion_suppress = False
 
-    full.resultado = best.resultado
-    full.motivo = best.motivo
-    full.filter_fp_safe = best.filter_fp_safe
-    full.best_pair = best.best_pair
-    full.pairs = best.pairs
-    full.eval_start = best.eval_start
-    full.eval_end = best.eval_end
-    full.intervalo_s = best_iv
-    full.context_veto = best.context_veto
-    full.ctx_walk_frac = best.ctx_walk_frac
-    full.ctx_stop_frac = best.ctx_stop_frac
-    full.ctx_hands_away_frac = best.ctx_hands_away_frac
-    full.ctx_walk_s = best.ctx_walk_s
-    full.ctx_stop_s = best.ctx_stop_s
-    full.htb_tier = best.htb_tier if any_clear else ("none" if not any_raw else best.htb_tier)
+    meta = clear_r if (any_clear and clear_r is not None) else best
+    full.resultado = meta.resultado
+    full.filter_fp_safe = meta.filter_fp_safe
+    full.best_pair = meta.best_pair
+    full.pairs = meta.pairs
+    meta_iv = clear_iv if (any_clear and clear_iv is not None) else best_iv
+    full.eval_start = meta.eval_start
+    full.eval_end = meta.eval_end
+    full.intervalo_s = meta_iv
+    if walk_veto and not any_clear and any_clear_raw:
+        full.context_veto = walk_veto
+    else:
+        full.context_veto = meta.context_veto
+    full.ctx_walk_frac = meta.ctx_walk_frac
+    full.ctx_stop_frac = meta.ctx_stop_frac
+    full.ctx_hands_away_frac = meta.ctx_hands_away_frac
+    full.ctx_walk_s = meta.ctx_walk_s
+    full.ctx_stop_s = meta.ctx_stop_s
+    full.motivo = meta.motivo
+    full.htb_tier = meta.htb_tier if any_clear else ("none" if not any_raw else best.htb_tier)
     if any_clear:
         full.htb_tier = "alert"
-    full.primary_action = best.primary_action if any_clear else ("hand_to_body" if any_raw else best.primary_action)
+    full.primary_action = meta.primary_action if any_clear else (
+        "hand_to_body" if any_raw else best.primary_action
+    )
     full.primary_action_confidence = best.primary_action_confidence
     if not any_clear and any_raw:
         full.primary_action = "hand_to_body"
@@ -175,4 +234,4 @@ def evaluate_pocket_temporal(
         )
         evaluated.append(((t0, t1), pol))
 
-    return _merge_results(full, evaluated)
+    return _merge_results(full, evaluated, tcfg=tcfg)

@@ -155,3 +155,9 @@ Prueba unitaria en un chunk:
 2. Un cambio (o un bloque) por experimento.  
 3. Barrido `-c 0 6 14` o completo; guardar CSV con nombre fijo.  
 4. Actualizar tabla en este doc **solo** si el cambio reemplaza baseline en producción.
+
+---
+
+## Experimento I (posterior al baseline)
+
+`temporal.walk_gate_enabled: true` en `pocket_filter_config.json` activo; **no** está en `BASELINE_PRODUCCION_H.json`. Ver fase I en [`HAND_TO_BODY_PROGRESO.md`](HAND_TO_BODY_PROGRESO.md).

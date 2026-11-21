@@ -91,10 +91,22 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ---
 
+## Fase **I** — `temporal.walk_gate` (ventana ganadora + marcha)
+
+**Objetivo:** bajar FP cat. **0** (~434 → ~250) sin perder mucho recall cat. **6** (3521).
+
+| Pieza | Detalle |
+|-------|---------|
+| Código | `temporal_eval._best_clear_window`, veto `TEMPORAL_WALK_GATE` |
+| Config activa | `walk_gate_enabled: true` en `temporal` |
+| Rollback G+H | `cp pocket_filter_config.BASELINE_PRODUCCION_H.json` (gate **desactivado**) |
+
+Tras barrido, guardar CSV como `gate_temporal_walk.csv` y comparar cat **0/6/14**.
+
 ## Próximos experimentos (sin tocar baseline sin re-barrido)
 
-- Afinar FP cat 0 con ventana+walk (manteniendo G+H como referencia).
 - Medir `hand_to_body_raw` en cat 6 en CSV para recall “gesto en pose”.
+- Ajustar `walk_gate_window_frac` / `walk_gate_contact_min_confidence` según barrido I.
 
 ---
 

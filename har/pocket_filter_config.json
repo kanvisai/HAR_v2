@@ -42,7 +42,11 @@
     "enabled": true,
     "window_s": 2.5,
     "step_s": 1.25,
-    "context_pad_s": 0.35
+    "context_pad_s": 0.35,
+    "walk_gate_enabled": true,
+    "walk_gate_window_frac": 0.38,
+    "walk_gate_window_min_s": 0.85,
+    "walk_gate_contact_min_confidence": 0.64
   },
   "action_policy": {
     "enabled": true,
