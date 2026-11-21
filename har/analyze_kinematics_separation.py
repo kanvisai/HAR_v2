@@ -48,6 +48,21 @@ def main() -> None:
         and not _bool(r.get("hand_to_body", ""))
     ]
     print(f"fn_cat6_raw_review: {len(pos)}  fp_cat0_raw_review: {len(neg)}")
+    if not pos or not neg:
+        return
+    print("\n--- Por motivo (medianas kin_hip_speed_norm) ---")
+    from collections import defaultdict
+
+    for label, bucket in (("pos cat6", pos), ("neg cat0", neg)):
+        by_m: dict[str, list[float]] = defaultdict(list)
+        for r in bucket:
+            by_m[(r.get("motivo") or "").strip()].append(_f(r.get("kin_hip_speed_norm", "")))
+        for m in sorted(by_m):
+            vals = [x for x in by_m[m] if x == x]
+            if vals:
+                med = sorted(vals)[len(vals) // 2]
+                print(f"  {label}  {m}: n={len(vals)}  hip_speed_med={med:.3f}")
+
     for col in KIN:
         pv = [_f(r[col]) for r in pos if col in r]
         nv = [_f(r[col]) for r in neg if col in r]
