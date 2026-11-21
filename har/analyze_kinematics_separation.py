@@ -12,7 +12,12 @@ KIN = (
     "kin_hip_speed_norm",
     "kin_elbow_angle_deg",
     "kin_wrist_axis_dist_min",
+    "kin_near_dwell_s",
+    "kin_swing_peaks",
+    "kin_approach_depth",
 )
+
+AXIS_MOTIVES = frozenset({"ACERCAMIENTO_EJE_TORSO", "APROXIMACION_EJE"})
 
 
 def _f(s: str) -> float:
@@ -62,6 +67,21 @@ def main() -> None:
             if vals:
                 med = sorted(vals)[len(vals) // 2]
                 print(f"  {label}  {m}: n={len(vals)}  hip_speed_med={med:.3f}")
+
+    ax_pos = [r for r in pos if (r.get("motivo") or "").strip() in AXIS_MOTIVES]
+    ax_neg = [r for r in neg if (r.get("motivo") or "").strip() in AXIS_MOTIVES]
+    if ax_pos and ax_neg:
+        print(f"\n--- Eje (n pos={len(ax_pos)} neg={len(ax_neg)}) dwell / swing / depth ---")
+        for col in ("kin_near_dwell_s", "kin_swing_peaks", "kin_approach_depth"):
+            pv = [_f(r[col]) for r in ax_pos if col in r]
+            nv = [_f(r[col]) for r in ax_neg if col in r]
+            pv = [x for x in pv if x == x]
+            nv = [x for x in nv if x == x]
+            if pv and nv:
+                print(
+                    f"  {col}: pos med {sorted(pv)[len(pv)//2]:.4f}  "
+                    f"neg med {sorted(nv)[len(nv)//2]:.4f}"
+                )
 
     for col in KIN:
         pv = [_f(r[col]) for r in pos if col in r]

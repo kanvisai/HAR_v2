@@ -59,6 +59,9 @@ class PocketResult:
     """Frenar candidato del modelo de robo (FP): sin pocket o pasillo caminando débil."""
     motion_suppress: bool = False
     kin_hip_speed_norm: float = 0.0
+    kin_near_dwell_s: float = 0.0
+    kin_swing_peaks: float = 0.0
+    kin_approach_depth: float = 0.0
 
     @property
     def accion_propuesta(self) -> str:

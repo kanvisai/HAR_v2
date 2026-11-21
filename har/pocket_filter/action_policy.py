@@ -64,6 +64,10 @@ class ActionPolicyConfig:
     """CONTACTO en marcha: confirmar solo si cadera lenta (hip_speed_norm ≤ umbral)."""
     kin_contact_max_hip_speed: float = 0.52
     kin_contact_walk_conf_min: float = 0.55
+    kin_axis_dwell_enabled: bool = False
+    """Eje + marcha: permitir clear si permanencia en r_near y pocos picos de braceo."""
+    kin_axis_min_near_dwell_s: float = 0.35
+    kin_axis_max_swing_peaks: float = 4.0
 
 
 def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
@@ -155,6 +159,8 @@ def decide_robbery_confirm(
     signals: dict[str, float],
     policy: ActionPolicyConfig,
     kin_hip_speed_norm: float = 0.0,
+    kin_near_dwell_s: float = 0.0,
+    kin_swing_peaks: float = 0.0,
 ) -> tuple[bool, str | None]:
     """
     Confirmación binaria para candidatos del modelo de robo (sin clasificar pasillo).
@@ -188,6 +194,13 @@ def decide_robbery_confirm(
 
     if motivo in AXIS_MOTIVES:
         if walking:
+            if (
+                policy.kin_axis_dwell_enabled
+                and kin_near_dwell_s >= policy.kin_axis_min_near_dwell_s
+                and kin_swing_peaks <= policy.kin_axis_max_swing_peaks
+                and conf >= policy.axis_min_confidence_while_walking
+            ):
+                return True, None
             return False, "GATE_WALK_NO_CONFIRM"
         if signals["stop_frac"] < policy.axis_quiet_stop_frac:
             return False, "GATE_AXIS_NOT_QUIET"
@@ -310,6 +323,9 @@ def apply_action_policy(
         keypoint_conf=keypoint_conf,
     )
     result.kin_hip_speed_norm = kin.hip_speed_norm
+    result.kin_near_dwell_s = kin.near_dwell_s
+    result.kin_swing_peaks = kin.swing_peaks
+    result.kin_approach_depth = kin.approach_depth
 
     result.hand_to_body_raw = result.hand_to_body
     conf = pocket_hand_to_body_confidence(result, pocket_cfg)
@@ -345,6 +361,8 @@ def apply_action_policy(
             signals=signals,
             policy=policy,
             kin_hip_speed_norm=result.kin_hip_speed_norm,
+            kin_near_dwell_s=result.kin_near_dwell_s,
+            kin_swing_peaks=result.kin_swing_peaks,
         )
         result.hand_to_body = accept
         result.context_veto = veto

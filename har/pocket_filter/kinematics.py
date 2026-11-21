@@ -30,6 +30,9 @@ class ClipKinematics:
     hip_speed_norm: float = 0.0
     elbow_angle_deg: float = 0.0
     wrist_axis_dist_min: float = 0.0
+    near_dwell_s: float = 0.0
+    swing_peaks: float = 0.0
+    approach_depth: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         return {k: round(float(v), 4) for k, v in asdict(self).items()}
@@ -61,6 +64,22 @@ def _elbow_angle_deg(poses: np.ndarray, t: int, wrist_ix: int, aspect: float) ->
         return 0.0
     cos = float(np.clip(np.dot(u, v) / (nu * nv), -1.0, 1.0))
     return float(np.degrees(np.arccos(cos)))
+
+
+def _swing_peak_count(d: np.ndarray, valid: np.ndarray, *, min_prominence: float = 0.04) -> int:
+    """Picos locales en distancia muñeca–bolsillo (braceo / oscilación)."""
+    peaks = 0
+    n = len(d)
+    for i in range(1, n - 1):
+        if not (valid[i] and valid[i - 1] and valid[i + 1]):
+            continue
+        if not (np.isfinite(d[i - 1 : i + 2]).all()):
+            continue
+        if d[i] > d[i - 1] and d[i] > d[i + 1]:
+            trough = min(d[i - 1], d[i + 1])
+            if d[i] - trough >= min_prominence:
+                peaks += 1
+    return peaks
 
 
 def _wrist_axis_dist(poses: np.ndarray, t: int, wrist_ix: int, aspect: float) -> float:
@@ -135,6 +154,17 @@ def compute_clip_kinematics(
                 dec_steps += 1
     if total_steps:
         out.approach_monotone_frac = dec_steps / total_steps
+
+    dwell = 0.0
+    for i in range(t):
+        if valid[i] and np.isfinite(d[i]) and d[i] <= cfg.r_near:
+            dwell += dt
+    out.near_dwell_s = dwell
+    out.swing_peaks = float(_swing_peak_count(d, valid))
+
+    if np.any(valid & np.isfinite(d)):
+        d_valid = d[valid & np.isfinite(d)]
+        out.approach_depth = float(np.nanmax(d_valid) - np.nanmin(d_valid))
 
     hip_sp = []
     for i in range(1, t):

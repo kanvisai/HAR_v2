@@ -239,7 +239,8 @@ Mientras no se sepa en qué fila vive Kanvis, "9,4 %" no se puede traducir a car
 - **Excluir** `n_frames` y cualquier proxy de duración del clip (riesgo de fuga, §P0-4).
 - **Alternativas descartadas:** más umbrales sobre las mismas 6 features; red neuronal end-to-end sobre poses (pierde auditabilidad, SOLUCIONES §12.2.H).
 - **Métrica:** ganancia de AUC/PR por categoría y por motivo sobre el conjunto de features actual, con split por sesión.
-- **Archivos:** `pocket_filter/` (nuevo módulo de features), `batch_data_result.py` (columnas nuevas).
+- **Archivos:** `pocket_filter/kinematics.py`, `batch_data_result.py` (columnas `kin_*`).
+- **Estado P1-1b (2026-11-22):** implementadas `kin_near_dwell_s`, `kin_swing_peaks`, `kin_approach_depth`; regla motivada `kin_axis_dwell_enabled` en `robbery_confirm` (eje + marcha). Probar con `pocket_filter_config.PRUEBA_KIN_AXIS_DWELL.json` y `analyze_kinematics_separation.py` (bloque eje).
 
 ### P1-2 — Fusión aprendida pequeña, calibrada y monótona
 

@@ -19,12 +19,24 @@
 ## Dirección ingeniería (sin red)
 
 1. **Condicionar por `motivo`** (eje vs contacto) + `kin_hip_speed_norm` / `ctx_walk_frac`.
-2. **Ampliar P1-1:** tiempo en `r_near`, retirada post-contacto, antifase bilateral, periodicidad braceo (spec §P1-1).
-3. **No** bajar umbral contacto global (Fase 2-c).
-4. **Ranker logístico:** opcional cola SAM; no sustituye cinemática ni Motion.
+2. **P1-1b (implementado):** `kin_near_dwell_s`, `kin_swing_peaks`, `kin_approach_depth` + política `kin_axis_dwell_enabled` (eje+marcha). Config: `pocket_filter_config.PRUEBA_KIN_AXIS_DWELL.json`.
+3. **P1-1 resto:** retirada post-contacto, antifase bilateral (pendiente).
+4. **No** bajar umbral contacto global (Fase 2-c).
+5. **Ranker logístico:** opcional cola SAM; no sustituye cinemática ni Motion.
 
 ## Comando seguimiento
 
 ```bash
 .venv/bin/python3 analyze_kinematics_separation.py /tmp/fase4_kin_10pct.csv
 ```
+
+## Experimento P2-d (`PRUEBA_KIN_CONTACT_QUIET`, 10 % seed 42)
+
+| Métrica | Baseline G+H+P0-3 | Kin gate | Δ |
+|---------|-------------------|----------|---|
+| Cat 6 TP | 352 | **356** | **+4** |
+| Cat 6 FN | 67 | **63** | −4 |
+| Cat 0 FP | 58 | **68** | **+10** |
+| Cat 14 TP | 35 | **36** | +1 |
+
+Mejor trade-off que Fase 2-c global (0,55 contacto: +10 TP cat 6, **+49** FP cat 0). **No congelar** sin afinar `kin_contact_max_hip_speed` (probar 0,45) o modo observación.

@@ -61,6 +61,9 @@ _KIN_CSV_KEYS = (
     "kin_hip_speed_norm",
     "kin_elbow_angle_deg",
     "kin_wrist_axis_dist_min",
+    "kin_near_dwell_s",
+    "kin_swing_peaks",
+    "kin_approach_depth",
 )
 
 
@@ -98,6 +101,9 @@ def _kin_csv_from_result(
         "kin_hip_speed_norm": d["hip_speed_norm"],
         "kin_elbow_angle_deg": d["elbow_angle_deg"],
         "kin_wrist_axis_dist_min": d["wrist_axis_dist_min"],
+        "kin_near_dwell_s": d["near_dwell_s"],
+        "kin_swing_peaks": d["swing_peaks"],
+        "kin_approach_depth": d["approach_depth"],
     }
 
 
