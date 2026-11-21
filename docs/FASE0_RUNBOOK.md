@@ -154,8 +154,28 @@ diff -u <(grep -E 'DISCARD|KEEP|REVIEW|CONFIRM' /tmp/fase0_10pct_report.txt) \
 
 ---
 
-## Fase 2 (después de Fase 1)
+## Fase 1 — CERRADA ✓
 
-1. **P0-4:** columna `session` en CSV.
-2. **P1-2 prep:** export motives/features para fusion sobre los 45 FN (eje/marcha).
-3. **P0-5:** intervalo Motion cuando C2 lo exporte.
+Embudo doctrina validado en `fase1_p03_report.txt`. Cablear Kanvis con **KEEP_INDETERMINADO**, no `else:DISCARD`.
+
+---
+
+## Fase 2 — cohortes REVIEW + `session_id` (P0-4 / P1-2 prep)
+
+Tras `git pull`:
+
+```bash
+.venv/bin/python3 export_review_cohort.py /tmp/fase1_p03_10pct.csv -o /tmp/cohorts/
+```
+
+**Pásame:** bloque `fn_cat6_raw_review` (n + motivos + walk_hi).
+
+Re-batch opcional (añade `session_id` al CSV; no cambia métricas):
+
+```bash
+.venv/bin/python3 batch_data_result.py "$DATA" --backend v2 \
+  --sample-frac 0.10 --seed 42 --workers 50 -o /tmp/fase2_10pct.csv
+head -1 /tmp/fase2_10pct.csv   # debe incluir session_id
+```
+
+Siguiente código: reglas **motivo-condicional** en `review_triage` o sklearn logistic sobre `all_cohorts.csv` (split por `session_id`).

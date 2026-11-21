@@ -53,10 +53,19 @@ EXPECTS_HAND_TO_BODY_FALSE: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 7, 9, 
 # Sin etiqueta de expectativa fiable en documentación
 EXPECTS_NO_LABEL: frozenset[int] = frozenset({8, 10, 11, 12})
 
+def session_id_from_poses_path(poses_path: Path) -> str:
+    """`data_result/<cat>/<session>/user_*/poses_full.npy` → session."""
+    parent = poses_path.parent
+    if parent.name.startswith("user"):
+        return parent.parent.name
+    return ""
+
+
 CSV_FIELDS = [
     "data_root",
     "path",
     "category",
+    "session_id",
     "backend",
     "elapsed_s",
     "hand_to_body",
@@ -334,6 +343,7 @@ def evaluate_one_clip(
         "data_root": "",
         "path": str(poses_path),
         "category": category,
+        "session_id": session_id_from_poses_path(poses_path),
         "backend": backend,
         "error": "",
     }
