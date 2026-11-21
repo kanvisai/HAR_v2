@@ -1,11 +1,8 @@
 """
-Fusión v2 (pocket + política + temporal) + legacy + cotidiano en clips sin categoría.
+Fusión mix: v2 como referencia de claro; veto fino solo en pasillo (eje débil + walk).
 
-Regla producción (sin etiqueta):
-  1. Siempre evaluar v2 (raw, conf, clear, motion_suppress).
-  2. Si clear v2 y conf >= umbral → confiar en v2 (no hace falta legacy para decidir).
-  3. Si conf < umbral o clear dudoso → legacy + acción cotidiana dominante;
-     otra acción con conf mayor desplaza la confirmación clara.
+Modo ``v2_first`` (producción): ``hand_to_body`` ≈ v2 salvo eje + caminar dominante.
+Legacy se guarda en CSV pero no tumba robos contacto/aprox.
 """
 from __future__ import annotations
 
@@ -22,20 +19,22 @@ from pocket_filter.action_policy import COTIDIAN_PRIMARY, evaluate_pocket_with_p
 from pocket_filter.config import CONFIG_PATH, PocketConfig, load_pocket_config
 from pocket_filter.types import PocketResult
 
-_DEFAULT_OVERRIDE_ACTIONS = frozenset({"walk", "stop", "arm_swing", "carry", "hand_up", "turn_torso"})
-_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
-_APPROX_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
+_COTIDIAN_FOR_SUPPRESS = frozenset(
+    {"walk", "stop", "arm_swing", "carry", "hand_up", "turn_torso"}
+)
 _WEAK_MOTIVES = frozenset({"ACERCAMIENTO_EJE_TORSO"})
 
 
 @dataclass
 class MixBackendConfig:
     enabled: bool = True
-    v2_clear_trust_confidence: float = 0.80
+    mix_mode: str = "v2_first"
     cotidian_override_min_confidence: float = 0.80
     cotidian_min_visible_frac: float = 0.08
+    weak_axis_veto_actions: tuple[str, ...] = ("walk",)
+    v2_clear_trust_confidence: float = 0.80
     legacy_agree_promotes_clear: bool = True
-    legacy_veto_when_low_conf: bool = True
+    legacy_veto_when_low_conf: bool = False
     legacy_veto_weak_motives_only: bool = True
     approx_clear_min_confidence: float = 0.52
 
@@ -58,6 +57,8 @@ def load_mix_backend_config(path: Path | None = None) -> MixBackendConfig:
     block = data.get("mix_backend", {})
     fields = {f.name for f in MixBackendConfig.__dataclass_fields__.values()}  # type: ignore
     kwargs = {k: v for k, v in block.items() if k in fields}
+    if "weak_axis_veto_actions" in block and isinstance(block["weak_axis_veto_actions"], list):
+        kwargs["weak_axis_veto_actions"] = tuple(block["weak_axis_veto_actions"])
     return MixBackendConfig(**kwargs)
 
 
@@ -85,13 +86,25 @@ def _cotidian_peak(
     return best_id, round(best_conf, 4)
 
 
-def _v2_policy_clear_trusted(motivo: str, conf: float, mcfg: MixBackendConfig) -> bool:
-    """Robos: la política v2 ya filtró; no tumbar claro con legacy en contacto/aprox."""
-    if motivo in _STRONG_MOTIVES:
-        return True
-    if motivo in _APPROX_MOTIVES and conf >= mcfg.approx_clear_min_confidence:
-        return True
-    return False
+def _motivo_base(motivo: str) -> str:
+    return motivo.split("|", 1)[0].strip()
+
+
+def _weak_axis_walk_veto(
+    motivo: str,
+    v2_conf: float,
+    cotidian_id: str,
+    cotidian_conf: float,
+    mcfg: MixBackendConfig,
+) -> bool:
+    if _motivo_base(motivo) not in _WEAK_MOTIVES:
+        return False
+    veto_actions = frozenset(mcfg.weak_axis_veto_actions) or frozenset({"walk"})
+    if cotidian_id not in veto_actions:
+        return False
+    if cotidian_conf < mcfg.cotidian_override_min_confidence:
+        return False
+    return cotidian_conf > v2_conf
 
 
 def fuse_mix_verdict(
@@ -102,12 +115,79 @@ def fuse_mix_verdict(
     cotidian_conf: float,
     mcfg: MixBackendConfig,
 ) -> MixFusion:
+    if mcfg.mix_mode != "v2_first":
+        return _fuse_mix_legacy_veto(
+            v2,
+            legacy_htb=legacy_htb,
+            cotidian_id=cotidian_id,
+            cotidian_conf=cotidian_conf,
+            mcfg=mcfg,
+        )
+
     v2_conf = float(v2.hand_to_body_confidence)
     v2_clear = bool(v2.hand_to_body)
     v2_raw = bool(v2.hand_to_body_raw)
-    motivo = v2.motivo.split("|", 1)[0]
+    meta = (
+        legacy_htb,
+        cotidian_id,
+        cotidian_conf,
+    )
 
-    if v2_clear and _v2_policy_clear_trusted(motivo, v2_conf, mcfg):
+    def _base(
+        htb: bool, sup: bool, rule: str
+    ) -> MixFusion:
+        return MixFusion(
+            hand_to_body=htb,
+            motion_suppress=sup,
+            mix_rule=rule,
+            legacy_hand_to_body=meta[0],
+            cotidian_action=meta[1],
+            cotidian_confidence=meta[2],
+        )
+
+    if v2_clear:
+        if _weak_axis_walk_veto(
+            v2.motivo, v2_conf, cotidian_id, cotidian_conf, mcfg
+        ):
+            suppress = not v2_raw
+            return _base(False, suppress, "MIX_AXIS_WALK_VETO")
+        return _base(True, bool(v2.motion_suppress), "MIX_V2_PASS")
+
+    if v2_raw:
+        return _base(False, False, "MIX_RAW_SAM_PATH")
+
+    if (
+        cotidian_id in _COTIDIAN_FOR_SUPPRESS
+        and cotidian_conf >= mcfg.cotidian_override_min_confidence
+    ):
+        return _base(False, True, f"MIX_NO_CLEAR_COTIDIAN_{cotidian_id.upper()}")
+
+    return _base(False, True, "MIX_V2_NO_CLEAR")
+
+
+_STRONG_MOTIVES = frozenset({"CONTACTO_BOLSILLO"})
+_APPROX_MOTIVES = frozenset({"APROXIMACION_OBSERVADA"})
+
+
+def _fuse_mix_legacy_veto(
+    v2: PocketResult,
+    *,
+    legacy_htb: bool,
+    cotidian_id: str,
+    cotidian_conf: float,
+    mcfg: MixBackendConfig,
+) -> MixFusion:
+    """Modo antiguo (legacy_veto); conservado para comparar barridos."""
+
+    v2_conf = float(v2.hand_to_body_confidence)
+    v2_clear = bool(v2.hand_to_body)
+    v2_raw = bool(v2.hand_to_body_raw)
+    motivo = _motivo_base(v2.motivo)
+
+    if v2_clear and (
+        motivo in _STRONG_MOTIVES
+        or (motivo in _APPROX_MOTIVES and v2_conf >= mcfg.approx_clear_min_confidence)
+    ):
         return MixFusion(
             hand_to_body=True,
             motion_suppress=bool(v2.motion_suppress),
@@ -127,41 +207,26 @@ def fuse_mix_verdict(
             cotidian_confidence=cotidian_conf,
         )
 
-    if v2_clear and v2_conf < mcfg.v2_clear_trust_confidence:
-        weak_only = mcfg.legacy_veto_weak_motives_only
-        is_weak = motivo in _WEAK_MOTIVES or (
-            weak_only and motivo not in _STRONG_MOTIVES | _APPROX_MOTIVES
-        )
-
-        if mcfg.legacy_agree_promotes_clear and legacy_htb:
-            return MixFusion(
-                hand_to_body=True,
-                motion_suppress=False,
-                mix_rule="MIX_V2_LOW_LEGACY_AGREE",
-                legacy_hand_to_body=legacy_htb,
-                cotidian_action=cotidian_id,
-                cotidian_confidence=cotidian_conf,
-            )
+    if v2_clear:
+        is_weak = motivo in _WEAK_MOTIVES
         if (
             is_weak
-            and cotidian_id in _DEFAULT_OVERRIDE_ACTIONS
+            and cotidian_id in _COTIDIAN_FOR_SUPPRESS
             and cotidian_conf >= mcfg.cotidian_override_min_confidence
             and cotidian_conf > v2_conf
         ):
-            suppress = not v2_raw
             return MixFusion(
                 hand_to_body=False,
-                motion_suppress=suppress,
+                motion_suppress=not v2_raw,
                 mix_rule=f"MIX_COTIDIAN_OVERRIDE_{cotidian_id.upper()}",
                 legacy_hand_to_body=legacy_htb,
                 cotidian_action=cotidian_id,
                 cotidian_confidence=cotidian_conf,
             )
         if mcfg.legacy_veto_when_low_conf and is_weak and not legacy_htb:
-            suppress = not v2_raw
             return MixFusion(
                 hand_to_body=False,
-                motion_suppress=suppress,
+                motion_suppress=not v2_raw,
                 mix_rule="MIX_V2_LOW_LEGACY_VETO",
                 legacy_hand_to_body=legacy_htb,
                 cotidian_action=cotidian_id,
@@ -177,33 +242,10 @@ def fuse_mix_verdict(
         )
 
     if not v2_raw:
-        suppress = True if not v2_clear else bool(v2.motion_suppress)
-        if (
-            cotidian_id in _DEFAULT_OVERRIDE_ACTIONS
-            and cotidian_conf >= mcfg.cotidian_override_min_confidence
-        ):
-            return MixFusion(
-                hand_to_body=False,
-                motion_suppress=True,
-                mix_rule=f"MIX_NO_CLEAR_COTIDIAN_{cotidian_id.upper()}",
-                legacy_hand_to_body=legacy_htb,
-                cotidian_action=cotidian_id,
-                cotidian_confidence=cotidian_conf,
-            )
         return MixFusion(
             hand_to_body=False,
-            motion_suppress=suppress,
+            motion_suppress=True,
             mix_rule="MIX_V2_NO_CLEAR",
-            legacy_hand_to_body=legacy_htb,
-            cotidian_action=cotidian_id,
-            cotidian_confidence=cotidian_conf,
-        )
-
-    if legacy_htb and v2_conf < mcfg.v2_clear_trust_confidence:
-        return MixFusion(
-            hand_to_body=False,
-            motion_suppress=False,
-            mix_rule="MIX_RAW_LEGACY_SUGGESTS",
             legacy_hand_to_body=legacy_htb,
             cotidian_action=cotidian_id,
             cotidian_confidence=cotidian_conf,
@@ -258,6 +300,9 @@ def evaluate_pocket_mix(
     )
 
     raw_v2 = bool(v2.hand_to_body_raw if v2.hand_to_body_raw is not None else v2.hand_to_body)
+    v2_clear = bool(v2.hand_to_body)
+    v2.hand_to_body_v2 = v2_clear
+
     fused = fuse_mix_verdict(
         v2,
         legacy_htb=bool(legacy.hand_to_body),

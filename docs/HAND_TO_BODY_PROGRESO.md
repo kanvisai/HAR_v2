@@ -91,16 +91,18 @@ Dataset prueba: `/media/8TB/.../data_clips_triton_pose/data_result` (muestra dis
 
 ---
 
-## Fase **J** — `--backend mix`
+## Fase **J** — `--backend mix` (`mix_mode: v2_first`)
 
-v2 + legacy + cotidiano cuando la confianza v2 &lt; **0,80** (sin categoría). Config `mix_backend` en JSON. Barrido:
+- **`hand_to_body` (fusionado)** ≈ v2; solo baja si **eje torso** claro + **walk** ≥ 80 % del clip.
+- **`hand_to_body_v2`** / **`audit_class_v2`**: referencia pura v2 en el mismo CSV.
+- `legacy_hand_to_body`: informativo; no tumba contacto/aprox.
 
 ```bash
-.venv/bin/python3 batch_data_result.py .../data_result --backend mix -o /tmp/mix.csv
-.venv/bin/python3 har2_test.py clip.npy --backend mix
+.venv/bin/python3 batch_data_result.py .../data_result --backend mix \
+  --sample-frac 0.1 --seed 42 -o /tmp/mix_10.csv
 ```
 
-Columna nueva CSV: `legacy_hand_to_body`; regla en `context_veto` (`MIX_*`).
+Al final del batch: dos tablas (fusionado vs v2).
 
 ---
 

@@ -41,6 +41,7 @@ class PocketResult:
     best_pair: PairEvidence | None = None
     intervalo_s: tuple[float, float] = (0.0, 0.0)
     legacy_hand_to_body: bool | None = None
+    hand_to_body_v2: bool | None = None
     hand_to_body_raw: bool | None = None
     context_guard_enabled: bool = False
     context_veto: str | None = None

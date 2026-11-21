@@ -77,6 +77,8 @@ CSV_FIELDS = [
     "htb_tier",
     "motion_suppress",
     "legacy_hand_to_body",
+    "hand_to_body_v2",
+    "audit_class_v2",
     "error",
 ]
 
@@ -374,6 +376,8 @@ def evaluate_one_clip(
                     "htb_tier": "",
                     "motion_suppress": "",
                     "legacy_hand_to_body": ht,
+                    "hand_to_body_v2": "",
+                    "audit_class_v2": "",
                 }
             )
         elif backend == "mix":
@@ -391,8 +395,12 @@ def evaluate_one_clip(
                 config_path=cfg_path,
             )
             ht = bool(result.hand_to_body)
+            ht_v2 = bool(
+                result.hand_to_body_v2 if result.hand_to_body_v2 is not None else ht
+            )
             ht_raw = bool(result.hand_to_body_raw)
             exp_s, match_s, audit = audit_row(category, ht)
+            _, _, audit_v2 = audit_row(category, ht_v2)
             row.update(
                 {
                     "elapsed_s": round(time.perf_counter() - t0, 4),
@@ -418,6 +426,8 @@ def evaluate_one_clip(
                     "htb_tier": result.htb_tier,
                     "motion_suppress": bool(result.motion_suppress),
                     "legacy_hand_to_body": bool(result.legacy_hand_to_body),
+                    "hand_to_body_v2": ht_v2,
+                    "audit_class_v2": audit_v2,
                 }
             )
         else:
@@ -462,6 +472,8 @@ def evaluate_one_clip(
                     "htb_tier": result.htb_tier,
                     "motion_suppress": bool(result.motion_suppress),
                     "legacy_hand_to_body": "",
+                    "hand_to_body_v2": "",
+                    "audit_class_v2": "",
                 }
             )
     except Exception as exc:
@@ -489,6 +501,8 @@ def evaluate_one_clip(
                 "htb_tier": "",
                 "motion_suppress": "",
                 "legacy_hand_to_body": "",
+                "hand_to_body_v2": "",
+                "audit_class_v2": "",
                 "error": str(exc),
             }
         )
@@ -782,17 +796,17 @@ def write_csv(rows: list[dict[str, Any]], output: Path) -> None:
             writer.writerow(out)
 
 
-def summarize_audit(rows: list[dict[str, Any]]) -> None:
+def _audit_table(rows: list[dict[str, Any]], class_key: str, title: str) -> None:
     by_cat: dict[int, Counter] = {}
     for row in rows:
-        if row.get("audit_class") in ("", "SKIP", "ERROR"):
+        ac = row.get(class_key, "")
+        if ac in ("", "SKIP", "ERROR"):
             continue
         cat = int(row["category"])
-        by_cat.setdefault(cat, Counter())[row["audit_class"]] += 1
-
+        by_cat.setdefault(cat, Counter())[ac] += 1
     if not by_cat:
         return
-    print("\nResumen auditoría (TP/TN/FP/FN por categoría con etiqueta):")
+    print(f"\n{title}")
     for cat in sorted(by_cat):
         c = by_cat[cat]
         labeled = c["TP"] + c["TN"] + c["FP"] + c["FN"]
@@ -800,6 +814,20 @@ def summarize_audit(rows: list[dict[str, Any]]) -> None:
         print(
             f"  cat {cat:2d}: {ok}/{labeled} aciertos  "
             f"TP={c['TP']} TN={c['TN']} FP={c['FP']} FN={c['FN']}"
+        )
+
+
+def summarize_audit(rows: list[dict[str, Any]]) -> None:
+    _audit_table(
+        rows,
+        "audit_class",
+        "Resumen auditoría hand_to_body (mix fusionado / v2)",
+    )
+    if any(str(r.get("audit_class_v2", "")).strip() for r in rows):
+        _audit_table(
+            rows,
+            "audit_class_v2",
+            "Resumen auditoría hand_to_body_v2 (solo v2, referencia)",
         )
 
 
