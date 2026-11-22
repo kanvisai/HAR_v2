@@ -47,14 +47,12 @@ from pocket_filter.io import load_poses_array
 from pocket_filter.kinematics import compute_clip_kinematics
 from pocket_filter.config import PocketConfig
 
-# Categorías donde esperamos hand_to_body (positivos hurto / campaña 6+14)
-EXPECTS_HAND_TO_BODY_TRUE: frozenset[int] = frozenset({6, 14})
-
-# Cotidianas / no robo: esperamos hand_to_body = false
-EXPECTS_HAND_TO_BODY_FALSE: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 7, 9, 13})
-
-# Sin etiqueta de expectativa fiable en documentación
-EXPECTS_NO_LABEL: frozenset[int] = frozenset({8, 10, 11, 12})
+from audit_labels import (
+    EXPECTS_HAND_TO_BODY_FALSE,
+    EXPECTS_HAND_TO_BODY_TRUE,
+    EXPECTS_NO_LABEL,
+    GESTURE_POSSIBLE_CATS,
+)
 
 _KIN_CSV_KEYS = (
     "kin_wrist_radial_vel_min",

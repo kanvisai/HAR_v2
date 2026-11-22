@@ -65,6 +65,21 @@ Misma convención de `path` que en `data_result`. Sin C2, el batch sigue en **te
 
 Comparación pareada baseline G+H vs mismo CSV con sidecar: recall clear 6/14, FP 0/5, % `INDETERMINADO`, cobertura válida en ventana.
 
+## Ablation oracle 10 % (2026-11-22)
+
+Pipeline: `p05_temporal_10pct.csv` → `motion_oracle_10pct.jsonl` (ventana ganadora) → batch `--motion-intervals` (sin OR temporal).
+
+| vs G+H temporal @ 10 % | Temporal (baseline) | Solo `motion_interval` |
+|------------------------|---------------------|-------------------------|
+| Cat 6 clear | **~352–355 (~84 %)** | **327 (78 %)** |
+| Cat 0 FP clear | **~58–66 (~12–14 %)** | **41 (8,9 %)** |
+| DISCARD_SUPPRESS | **~9** | **864** (`GATE_WALK_NO_CONFIRM` dominante) |
+| Cat 6 FN con raw | — | **70/92 (76 %)** recuperables vía REVIEW |
+
+**Conclusión:** sustituir el OR temporal por **un único intervalo** (aunque sea la ventana ganadora) **no** es válido como producción: destruye recall y dispara `motion_suppress` al evaluar solo un slice en marcha. **P0-5 con C2** debe ser **intervalo Motion + política/temporal acoplada** (p. ej. ventana sobre el pico, no “single window only”), no este modo batch literal.
+
+Mantener **baseline G+H**; usar C2 real cuando exista y repetir A/B.
+
 ## Smoke test (2026-11-22)
 
 Batch **5 %** seed 42 **sin** `--motion-intervals`, config baseline → `/tmp/p05_smoke.csv` (**1191** filas, ~2 min).

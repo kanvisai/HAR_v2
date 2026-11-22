@@ -17,9 +17,17 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-NEGATIVE_CATS = {0, 1, 2, 3, 4, 5, 7, 9, 13}
+from audit_labels import (
+    CATEGORY_NOTES,
+    EXPECTS_NO_LABEL,
+    GESTURE_POSSIBLE_CATS,
+    STRICT_NEGATIVE_CATS,
+)
+
+NEGATIVE_CATS = set(STRICT_NEGATIVE_CATS)
 POSITIVE_CATS = {6, 14}
-LABELED = NEGATIVE_CATS | POSITIVE_CATS
+GESTURE_CATS = set(GESTURE_POSSIBLE_CATS) | set(EXPECTS_NO_LABEL)
+LABELED = NEGATIVE_CATS | POSITIVE_CATS | GESTURE_CATS
 
 
 def _bool(s: str) -> bool:
@@ -103,13 +111,23 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
         raw_n = sum(1 for r in subset if _bool(r.get("hand_to_body_raw", "")))
         clr_n = sum(1 for r in subset if _bool(r.get("hand_to_body", "")))
         safe_n = sum(1 for r in subset if _bool(r.get("filter_fp_safe", "")))
-        note = "robo" if cat in POSITIVE_CATS else "neg"
+        if cat in POSITIVE_CATS:
+            note = "robo"
+        elif cat in GESTURE_POSSIBLE_CATS:
+            note = "gesto+"
+        elif cat in EXPECTS_NO_LABEL:
+            note = "sin_etiq"
+        else:
+            note = "neg"
         lines.append(
             f"  {cat:3d} | {n:5d} | {100 * raw_n / n:5.1f} | "
             f"{100 * clr_n / n:6.1f} | {100 * safe_n / n:8.1f} | {note}"
         )
 
-    _print_section(lines, "4. FP clear (hand_to_body) — categorías negativas")
+    _print_section(
+        lines,
+        "4. FP clear — estrictas (0/1/2/5/9/13); cat 3/4/7/8/10 ver §4b",
+    )
     fp_total = 0
     neg_total = 0
     for cat in sorted(NEGATIVE_CATS):
@@ -129,6 +147,23 @@ def run_audit(rows: list[dict[str, str]]) -> list[str]:
             lines.append(
                 f"  Sin cat 0/5: FP={fp_ex}/{len(ex_05)} ({100 * fp_ex / len(ex_05):.1f}%)"
             )
+
+    _print_section(
+        lines,
+        "4b. Gesto pocket posible (3 compra, 4 llevando, 7 reponer, 8/10…)",
+    )
+    lines.append(
+        "  clear=true aquí NO es FP duro: pocket puede ser correcto; métrica carpeta≠descarte automático."
+    )
+    for cat in sorted(GESTURE_CATS):
+        subset = [r for r in ok if int(r["category"]) == cat]
+        if not subset:
+            continue
+        clr_n = sum(1 for r in subset if _bool(r.get("hand_to_body", "")))
+        note = CATEGORY_NOTES.get(cat, "")
+        lines.append(
+            f"  cat {cat:2d}: clear={clr_n}/{len(subset)} ({100 * clr_n / len(subset):.1f}%)  — {note}"
+        )
 
     _print_section(lines, "5. Embudo Orchestrator — doctrina P0-3 (usar en Kanvis)")
     for label, cats in (
