@@ -2,7 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pocket_infer import infer_from_poses_array, orchestrator_branch
+from pocket_infer import infer_from_poses_array, infer_from_poses_bytes, orchestrator_branch, validate_c3_payload
+from pocket_infer import result_to_c3_dict
 from pocket_filter.types import PocketResult
 
 
@@ -25,3 +26,23 @@ def test_infer_from_array_smoke():
     result = infer_from_poses_array(poses, fps=12.0, aspect=1.77)
     assert result.n_frames == 24
     assert isinstance(result.hand_to_body, bool)
+
+
+def test_infer_from_bytes_roundtrip():
+    poses = np.random.randn(20, 8, 2).astype(np.float64) * 0.05 + 0.5
+    from io import BytesIO
+
+    buf = BytesIO()
+    np.save(buf, poses)
+    r1 = infer_from_poses_bytes(buf.getvalue(), fps=12.0, aspect=1.77)
+    r2 = infer_from_poses_array(poses, fps=12.0, aspect=1.77)
+    assert r1.hand_to_body == r2.hand_to_body
+    assert r1.hand_to_body_raw == r2.hand_to_body_raw
+    assert r1.motivo == r2.motivo
+
+
+def test_validate_c3_payload_ok():
+    poses = np.zeros((16, 8, 2), dtype=np.float64)
+    r = infer_from_poses_array(poses, fps=12.0)
+    payload = result_to_c3_dict(r, object_key="s3://bucket/x/poses_full.npy")
+    assert validate_c3_payload(payload) == []
