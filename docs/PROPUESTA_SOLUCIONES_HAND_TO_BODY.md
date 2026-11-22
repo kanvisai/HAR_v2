@@ -216,7 +216,7 @@ Mientras no se sepa en qué fila vive Kanvis, "9,4 %" no se puede traducir a car
   4. Incluir FP reales de tienda (Motion sí, humano "no robo") como conjunto aparte, prioritario para validar INCOMPATIBLE.
 - **Alternativas descartadas:** split aleatorio por clip (varios clips de una misma sesión en train y test inflan las métricas).
 - **Métrica:** nº de eventos por grupo y por cámara; tasas con IC por bootstrap de sesiones.
-- **Archivos:** `batch_data_result.py` (columnas `session`, `camera`, scores Motion), script de split.
+- **Archivos:** `batch_data_result.py` (`session_id`, `eval_interval_*`, Motion), [`split_by_session.py`](../har/split_by_session.py), [`motion_peaks_to_jsonl.py`](../har/motion_peaks_to_jsonl.py). Doc: [`P0_4_SESSION_SPLIT.md`](P0_4_SESSION_SPLIT.md).
 
 ### P0-5 — Evaluar sobre el intervalo de Motion
 
@@ -240,7 +240,7 @@ Mientras no se sepa en qué fila vive Kanvis, "9,4 %" no se puede traducir a car
 - **Alternativas descartadas:** más umbrales sobre las mismas 6 features; red neuronal end-to-end sobre poses (pierde auditabilidad, SOLUCIONES §12.2.H).
 - **Métrica:** ganancia de AUC/PR por categoría y por motivo sobre el conjunto de features actual, con split por sesión.
 - **Archivos:** `pocket_filter/kinematics.py`, `batch_data_result.py` (columnas `kin_*`).
-- **Estado P1-1b (2026-11-22):** implementadas `kin_near_dwell_s`, `kin_swing_peaks`, `kin_approach_depth`; regla motivada `kin_axis_dwell_enabled` en `robbery_confirm` (eje + marcha). Probar con `pocket_filter_config.PRUEBA_KIN_AXIS_DWELL.json` y `analyze_kinematics_separation.py` (bloque eje).
+- **Estado P1-1b (2026-11-22):** **V1** descartado (+7 / +47 FP cat 0 @ 10 %). **V2** @ 10 % vs baseline: **+3 TP cat 6**, **+8 FP cat 0** — challenger opcional, **baseline sigue default**. Detalle: [`FASE4_KINEMATICS_NOTES.md`](FASE4_KINEMATICS_NOTES.md).
 
 ### P1-2 — Fusión aprendida pequeña, calibrada y monótona
 

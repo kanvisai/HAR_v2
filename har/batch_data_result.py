@@ -149,6 +149,8 @@ CSV_FIELDS = [
     "interval_t0",
     "interval_t1",
     "motion_peak_score",
+    "eval_interval_t0",
+    "eval_interval_t1",
     "hand_to_body_confidence",
     "primary_action",
     "primary_action_confidence",
@@ -415,6 +417,8 @@ def _pocket_eval_meta() -> dict[str, str]:
         "interval_t0": "",
         "interval_t1": "",
         "motion_peak_score": "",
+        "eval_interval_t0": "",
+        "eval_interval_t1": "",
     }
 
 
@@ -642,6 +646,10 @@ def evaluate_one_clip(
             result = evaluate_pocket_with_policy(poses, **eval_kwargs)
             ht = bool(result.hand_to_body)
             ht_raw = bool(result.hand_to_body_raw)
+            iv_win = result.intervalo_s
+            if iv_win[1] > iv_win[0]:
+                row["eval_interval_t0"] = round(float(iv_win[0]), 4)
+                row["eval_interval_t1"] = round(float(iv_win[1]), 4)
             exp_s, match_s, audit = audit_row(category, ht)
             row.update(
                 {
