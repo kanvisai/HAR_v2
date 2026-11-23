@@ -12,7 +12,8 @@
 | Backend | `hand_to_body_backend: v2` |
 | Geometría pocket | eje torso + perfil (`enable_axis_body_approach`, `allow_side_view_geometry`) |
 | Política | `action_policy.enabled: true`, **`gate_mode: robbery_confirm`** |
-| Temporal (chunks ~8 s) | **`temporal.enabled: true`**, ventana **2,5 s**, paso **1,25 s** |
+| Confirmación clara | **Solo** `CONTACTO_BOLSILLO` o `APROXIMACION_OBSERVADA` con dwell+monotonía; **`ACERCAMIENTO_EJE_TORSO` → raw/review**; veto **carry**; ventana ≥ **2 s** |
+| Temporal (chunks ~8 s) | **`temporal.enabled: true`**, ventana **2,5 s**, paso **1,25 s**; clear = **ventana ganadora** (no OR entre ventanas) |
 | Context guard | `enabled: false` |
 
 Código: `pocket_filter/temporal_eval.py`, `action_policy.py`, `confidence.py`, `evaluate.py`.

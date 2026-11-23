@@ -70,6 +70,16 @@ class ActionPolicyConfig:
     kin_axis_max_swing_peaks: float = 4.0
     """Si > 0, excepción eje+marcha solo con kin_hip_speed_norm ≤ umbral (pasillo suele ir más rápido)."""
     kin_axis_max_hip_speed: float = 0.0
+    """En robbery_confirm: solo CONTACTO (y opcional APROX con cinemática); eje → review."""
+    confirm_allow_axis_clear: bool = False
+    """APROX: exigir permanencia cerca del bolsillo en la ventana."""
+    confirm_approx_min_near_dwell_s: float = 0.28
+    """APROX: fracción de frames con distancia decreciendo (aproximación clara)."""
+    confirm_approx_min_monotone_frac: float = 0.56
+    """Vetar confirmación débil si carry visible en la ventana (meter al carro)."""
+    confirm_veto_carry_frac: float = 0.10
+    """Duración mínima de la ventana evaluada para permitir clear (evita cola de chunk)."""
+    confirm_min_eval_s: float = 2.0
 
 
 def load_action_policy_config(path: Path | None = None) -> ActionPolicyConfig:
@@ -163,6 +173,9 @@ def decide_robbery_confirm(
     kin_hip_speed_norm: float = 0.0,
     kin_near_dwell_s: float = 0.0,
     kin_swing_peaks: float = 0.0,
+    kin_approach_monotone_frac: float = 0.0,
+    carry_visible_frac: float = 0.0,
+    eval_s: float | None = None,
 ) -> tuple[bool, str | None]:
     """
     Confirmación binaria para candidatos del modelo de robo (sin clasificar pasillo).
@@ -187,14 +200,36 @@ def decide_robbery_confirm(
             return True, None
         return False, "GATE_LOW_CONFIDENCE"
 
+    short_eval = eval_s is not None and eval_s < policy.confirm_min_eval_s
+
     if motivo in APPROACH_MOTIVES:
+        if short_eval:
+            return False, "GATE_SHORT_EVAL"
         if walking:
             return False, "GATE_WALK_NO_CONFIRM"
+        if (
+            policy.confirm_veto_carry_frac > 0
+            and carry_visible_frac >= policy.confirm_veto_carry_frac
+        ):
+            return False, "GATE_CARRY_NOT_POCKET"
+        if kin_near_dwell_s < policy.confirm_approx_min_near_dwell_s:
+            return False, "GATE_APPROX_NO_DWELL"
+        if kin_approach_monotone_frac < policy.confirm_approx_min_monotone_frac:
+            return False, "GATE_APPROX_WEAK_APPROACH"
         if conf >= policy.approx_min_confidence:
             return True, None
         return False, "GATE_LOW_CONFIDENCE"
 
     if motivo in AXIS_MOTIVES:
+        if short_eval:
+            return False, "GATE_SHORT_EVAL"
+        if not policy.confirm_allow_axis_clear:
+            return False, "GATE_AXIS_REVIEW_ONLY"
+        if (
+            policy.confirm_veto_carry_frac > 0
+            and carry_visible_frac >= policy.confirm_veto_carry_frac
+        ):
+            return False, "GATE_CARRY_NOT_POCKET"
         if walking:
             hip_ok = (
                 policy.kin_axis_max_hip_speed <= 0
@@ -333,6 +368,7 @@ def apply_action_policy(
     result.kin_near_dwell_s = kin.near_dwell_s
     result.kin_swing_peaks = kin.swing_peaks
     result.kin_approach_depth = kin.approach_depth
+    result.kin_approach_monotone_frac = kin.approach_monotone_frac
 
     result.hand_to_body_raw = result.hand_to_body
     conf = pocket_hand_to_body_confidence(result, pocket_cfg)
@@ -361,6 +397,11 @@ def apply_action_policy(
     raw = bool(result.hand_to_body_raw)
 
     if policy.gate_mode == "robbery_confirm":
+        eval_slice = poses[result.eval_start : result.eval_end + 1]
+        seconds, visible = _cotidian_durations(eval_slice, fps=fps, aspect=aspect)
+        carry_visible_frac = seconds.get("carry", 0.0) / max(visible, 1e-6)
+        result.cotidian_seconds = {k: round(v, 3) for k, v in seconds.items() if v > 0}
+        eval_s = (result.eval_end - result.eval_start + 1) / max(fps, 1e-6)
         accept, veto = decide_robbery_confirm(
             pocket_compatible=raw,
             conf=conf,
@@ -370,6 +411,9 @@ def apply_action_policy(
             kin_hip_speed_norm=result.kin_hip_speed_norm,
             kin_near_dwell_s=result.kin_near_dwell_s,
             kin_swing_peaks=result.kin_swing_peaks,
+            kin_approach_monotone_frac=kin.approach_monotone_frac,
+            carry_visible_frac=carry_visible_frac,
+            eval_s=eval_s,
         )
         result.hand_to_body = accept
         result.context_veto = veto
@@ -381,7 +425,6 @@ def apply_action_policy(
             result.htb_tier = "none"
         result.primary_action = "hand_to_body" if (accept or raw) else "no_gesture"
         result.primary_action_confidence = conf if (accept or raw) else 0.0
-        result.cotidian_seconds = {}
         sup, sup_code = decide_motion_suppress(
             pocket_compatible=raw,
             hand_to_body_clear=accept,

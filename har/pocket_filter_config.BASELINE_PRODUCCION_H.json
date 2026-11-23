@@ -60,7 +60,12 @@
     "inconclusive_below_s": 0.25,
     "axis_max_tier": "review",
     "review_min_confidence": 0.48,
-    "review_axis_min_confidence": 0.52
+    "review_axis_min_confidence": 0.52,
+    "confirm_allow_axis_clear": false,
+    "confirm_approx_min_near_dwell_s": 0.28,
+    "confirm_approx_min_monotone_frac": 0.56,
+    "confirm_veto_carry_frac": 0.10,
+    "confirm_min_eval_s": 2.0
   },
   "context_guard": {
     "enabled": false,

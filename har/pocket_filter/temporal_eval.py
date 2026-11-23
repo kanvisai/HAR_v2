@@ -129,9 +129,12 @@ def _merge_results(
     ranked = sorted(windows, key=lambda x: _window_score(x[1]), reverse=True)
     best_iv, best = ranked[0]
 
-    any_clear_raw = any(r.hand_to_body for _, r in windows)
     accepted, clear_iv, clear_r, walk_veto = _best_clear_window(windows, tcfg)
-    any_clear = accepted if tcfg.walk_gate_enabled else any_clear_raw
+    best_iv, best = ranked[0]
+    if tcfg.walk_gate_enabled:
+        any_clear = accepted
+    else:
+        any_clear = bool(best.hand_to_body)
     any_raw = any(bool(r.hand_to_body_raw) for _, r in windows)
     max_conf = max(r.hand_to_body_confidence for _, r in windows)
 

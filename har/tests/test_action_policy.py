@@ -48,7 +48,7 @@ def test_policy_keeps_strong_compatible():
         ]
     )
     result = evaluate_pocket(poses, fps=12.0, aspect=1.0, frame_height=720.0)
-    policy = load_action_policy_config()
+    policy = ActionPolicyConfig(gate_mode="full", enabled=True)
     out = apply_action_policy(result, poses, fps=12.0, aspect=1.0, policy=policy)
     assert out.hand_to_body
     assert out.primary_action == "hand_to_body"
@@ -248,6 +248,7 @@ def test_robbery_confirm_axis_walking_kin_dwell_blocks_fast_hip():
 def test_robbery_confirm_axis_walking_kin_dwell_exception():
     policy = ActionPolicyConfig(
         gate_mode="robbery_confirm",
+        confirm_allow_axis_clear=True,
         kin_axis_dwell_enabled=True,
         kin_axis_min_near_dwell_s=0.35,
         kin_axis_max_swing_peaks=4.0,
@@ -283,9 +284,34 @@ def test_robbery_confirm_axis_walking_kin_dwell_exception():
     assert not ok2 and veto2 == "GATE_WALK_NO_CONFIRM"
 
 
-def test_robbery_confirm_allows_axis_when_quiet():
+def test_robbery_confirm_blocks_axis_by_default_for_clear():
     policy = ActionPolicyConfig(
         gate_mode="robbery_confirm",
+        axis_min_confidence=0.50,
+        axis_quiet_stop_frac=0.30,
+    )
+    quiet = {
+        "walk_frac": 0.1,
+        "walk_s": 0.2,
+        "stop_frac": 0.5,
+        "stop_s": 3.0,
+        "hands_away_frac": 0.0,
+        "hands_away_s": 0.0,
+    }
+    ok, veto = decide_robbery_confirm(
+        pocket_compatible=True,
+        conf=0.55,
+        motivo="ACERCAMIENTO_EJE_TORSO",
+        signals=quiet,
+        policy=policy,
+    )
+    assert not ok and veto == "GATE_AXIS_REVIEW_ONLY"
+
+
+def test_robbery_confirm_allows_axis_when_quiet_and_opt_in():
+    policy = ActionPolicyConfig(
+        gate_mode="robbery_confirm",
+        confirm_allow_axis_clear=True,
         axis_min_confidence=0.50,
         axis_quiet_stop_frac=0.30,
     )
