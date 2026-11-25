@@ -130,7 +130,7 @@ def _print_summary_table(by_cat: dict[int, Counter[str]]) -> None:
         print("Sin datos.")
         return
 
-    col_headers = ["cat", "total"] + list(SUMMARY_TYPES)
+    col_headers = ["cat", "total", "no_htb%", "htb_n"] + list(SUMMARY_TYPES)
     widths = {h: max(len(h), 6 if h == "cat" else 12) for h in col_headers}
 
     rows_out: list[list[str]] = []
@@ -139,7 +139,9 @@ def _print_summary_table(by_cat: dict[int, Counter[str]]) -> None:
     for cat in cats:
         c = by_cat[cat]
         total = sum(c.values())
-        row = [str(cat), str(total)]
+        htb_n = c.get("hand_to_body", 0)
+        no_htb_pct = 100.0 * (total - htb_n) / max(total, 1)
+        row = [str(cat), str(total), f"{no_htb_pct:.1f}", str(htb_n)]
         for key in SUMMARY_TYPES:
             n = c.get(key, 0)
             totals[key] += n
@@ -147,7 +149,14 @@ def _print_summary_table(by_cat: dict[int, Counter[str]]) -> None:
             widths[key] = max(widths[key], len(str(n)))
         rows_out.append(row)
 
-    row_tot = ["TOTAL", str(sum(totals.values()))]
+    grand = sum(totals.values())
+    htb_all = totals.get("hand_to_body", 0)
+    row_tot = [
+        "TOTAL",
+        str(grand),
+        f"{100.0 * (grand - htb_all) / max(grand, 1):.1f}",
+        str(htb_all),
+    ]
     for key in SUMMARY_TYPES:
         row_tot.append(str(totals.get(key, 0)))
     rows_out.append(row_tot)
@@ -176,8 +185,11 @@ def _print_summary_table(by_cat: dict[int, Counter[str]]) -> None:
         inc = c.get("inconclusive", 0) + c.get("error", 0)
         cot = {k: c.get(k, 0) for k in COTIDIAN_IDS if c.get(k, 0)}
         cot_parts = ", ".join(f"{k} {v} ({100 * v / total:.1f}%)" for k, v in sorted(cot.items(), key=lambda x: -x[1]))
+        no_htb = total - htb
         print(
-            f"  cat {cat:2d}: {total:5d} clips  |  hand_to_body {htb:5d} ({100 * htb / total:.1f}%)"
+            f"  cat {cat:2d}: {total:5d} clips  |  "
+            f"**NO hand_to_body** {no_htb:5d} ({100 * no_htb / total:.1f}%)"
+            f"  |  hand_to_body {htb:5d} ({100 * htb / total:.1f}%)"
             f"  |  inconclusive+error {inc:5d} ({100 * inc / total:.1f}%)"
         )
         if cot_parts:
