@@ -15,7 +15,7 @@ import numpy as np
 
 from har_actions.detect import detect_cotidian_actions, gesture_seconds, visible_seconds
 from har_actions.pose import smooth
-from pocket_filter.confidence import pocket_hand_to_body_confidence
+from pocket_filter.confidence import pocket_hand_to_body_confidence, refine_hand_to_body_confidence
 from pocket_filter.config import CONFIG_PATH, PocketConfig, load_pocket_config
 from pocket_filter.context_guard import compute_context_signals, load_context_guard_config
 from pocket_filter.evaluate import evaluate_pocket
@@ -369,12 +369,15 @@ def apply_action_policy(
     result.kin_swing_peaks = kin.swing_peaks
     result.kin_approach_depth = kin.approach_depth
     result.kin_approach_monotone_frac = kin.approach_monotone_frac
+    result.kin_wrist_radial_vel_min = kin.wrist_radial_vel_min
+    result.kin_elbow_angle_deg = kin.elbow_angle_deg
+    result.kin_wrist_axis_dist_min = kin.wrist_axis_dist_min
 
     result.hand_to_body_raw = result.hand_to_body
     conf = pocket_hand_to_body_confidence(result, pocket_cfg)
-    result.hand_to_body_confidence = conf
 
     if not policy.enabled:
+        result.hand_to_body_confidence = conf
         result.cotidian_seconds = {}
         result.htb_tier = "alert" if result.hand_to_body else "none"
         result.primary_action = "hand_to_body" if result.hand_to_body else "no_gesture"
@@ -393,6 +396,11 @@ def apply_action_policy(
     result.ctx_hands_away_frac = signals["hands_away_frac"]
     result.ctx_walk_s = signals["walk_s"]
     result.ctx_stop_s = signals["stop_s"]
+
+    result.hand_to_body_confidence = refine_hand_to_body_confidence(
+        conf, result, pocket_cfg, signals
+    )
+    conf = result.hand_to_body_confidence
 
     raw = bool(result.hand_to_body_raw)
 
@@ -515,6 +523,23 @@ def apply_action_policy(
     return result
 
 
+def _attach_timestamp_meta(
+    result: PocketResult,
+    *,
+    had_file: bool,
+    prepared: np.ndarray | None,
+    reject: str | None,
+) -> None:
+    if reject:
+        result.timestamps_reject = reject
+        result.timestamps_source = "fps"
+    elif had_file and prepared is not None:
+        result.timestamps_source = "pose_timestamps"
+    else:
+        result.timestamps_source = "fps"
+        result.timestamps_reject = None
+
+
 def evaluate_pocket_with_policy(
     poses: np.ndarray,
     *,
@@ -531,12 +556,18 @@ def evaluate_pocket_with_policy(
     config_path: Path | None = None,
     use_temporal: bool | None = None,
 ) -> PocketResult:
+    from pocket_filter.timestamp_utils import prepare_frame_timestamps
+
+    had_ts_file = timestamps is not None
+    ts, ts_reject = prepare_frame_timestamps(timestamps, len(poses), fps)
+    timestamps = ts
+
     if interval_s is None and use_temporal is not False:
         from pocket_filter.temporal_eval import load_temporal_config, evaluate_pocket_temporal
 
         tcfg = load_temporal_config(config_path)
         if (use_temporal is True or tcfg.enabled) and tcfg.enabled:
-            return evaluate_pocket_temporal(
+            out = evaluate_pocket_temporal(
                 poses,
                 fps=fps,
                 aspect=aspect,
@@ -548,6 +579,8 @@ def evaluate_pocket_with_policy(
                 keypoint_conf=keypoint_conf,
                 config_path=config_path,
             )
+            _attach_timestamp_meta(out, had_file=had_ts_file, prepared=timestamps, reject=ts_reject)
+            return out
 
     result = evaluate_pocket(
         poses,
@@ -562,7 +595,7 @@ def evaluate_pocket_with_policy(
         interval_s=interval_s,
         context_pad_s=context_pad_s,
     )
-    return apply_action_policy(
+    out = apply_action_policy(
         result,
         poses,
         fps=fps,
@@ -574,3 +607,5 @@ def evaluate_pocket_with_policy(
         pocket_cfg=config,
         config_path=config_path,
     )
+    _attach_timestamp_meta(out, had_file=had_ts_file, prepared=timestamps, reject=ts_reject)
+    return out

@@ -21,7 +21,7 @@ Sidecars **opcionales** (misma carpeta):
 | Archivo | Uso |
 |---------|-----|
 | `valid_mask.npy` | Máscara por frame / KP |
-| `pose_frame_timestamps.npy` | Tiempo real por frame |
+| `pose_frame_timestamps.npy` | Tiempo por frame (**debe ser t relativo al chunk**, o epoch re-anclado en HAR); si inválido → fallback `fps` |
 | `video` vía convención pose | Aspect ratio (si existe) |
 
 Formato npy: `(T, 8, 2)` o `(T, 8, 3)` con conf en canal 3 — ver `pocket_filter/io.py`.
@@ -146,7 +146,26 @@ Objeto `PocketResult` / JSON (`pocket_result_to_dict` + extras en `har2_test` / 
 | **`intervalo_s`** | (t0, t1) | Ventana ganadora temporal (segundos) |
 | **`ctx_walk_frac`**, **`ctx_stop_frac`** | float | Contexto marcha/parado en evaluación |
 
-Kin opcional (`kin_*` en batch): no requerido en C3 v1.
+### 4.1 Ritmo del movimiento (`movement`)
+
+Cada JSON incluye el objeto **`movement`** (esqueleto + contexto marcha). Sirve para combinar HAR con Motion **sin** sustituir `hand_to_body` ni `motion_suppress`.
+
+| Campo | Tipo | Uso en C3 |
+|-------|------|-----------|
+| **`hip_speed_norm`** | float | Velocidad de traslación del cuerpo (cadera / ancho hombros, u/s). Alta ⇒ marcha rápida. |
+| **`wrist_approach_vel_min`** | float | Velocidad radial muñeca→bolsillo (≤ 0 al acercarse). |
+| **`wrist_approach_speed`** | float | `\|min\|` del anterior (más fácil de leer). |
+| **`near_dwell_s`** | float | Segundos con muñeca cerca del bolsillo. |
+| **`body_pace`** | string | `quiet` \| `walking` \| `fast` |
+| **`approach_pace`** | string | `none` \| `slow` \| `moderate` \| `snap` |
+| **`tempo_hint`** | string | `natural` \| `neutral` \| `hurried` (heurística auditable) |
+| **`walk_frac`**, **`stop_frac`** | float | Mismo contexto que `ctx_*` en el payload raíz. |
+
+Ejemplo de lógica de negocio (orientativa):
+
+- `hand_to_body` + `tempo_hint == "natural"` → prioridad baja / compra cotidiana.
+- `tempo_hint == "hurried"` con Motion fuerte → subir prioridad aunque `hand_to_body` sea false.
+- Los campos planos **`kin_*`** siguen en el JSON (compatibilidad batch); C3 puede usar solo `movement`.
 
 ---
 

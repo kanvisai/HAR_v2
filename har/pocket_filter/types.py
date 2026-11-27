@@ -63,6 +63,12 @@ class PocketResult:
     kin_swing_peaks: float = 0.0
     kin_approach_depth: float = 0.0
     kin_approach_monotone_frac: float = 0.0
+    kin_wrist_radial_vel_min: float = 0.0
+    kin_elbow_angle_deg: float = 0.0
+    kin_wrist_axis_dist_min: float = 0.0
+    """fps = inferencia por índice; pose_timestamps = sidecar válido (a veces re-anclado a t0)."""
+    timestamps_source: str = "fps"
+    timestamps_reject: str | None = None
 
     @property
     def accion_propuesta(self) -> str:
@@ -74,6 +80,26 @@ class PocketResult:
 
 
 def pocket_result_to_dict(result: PocketResult) -> dict[str, Any]:
+    from pocket_filter.kinematics import ClipKinematics, build_movement_summary
+
     data = asdict(result)
     data["accion_propuesta"] = result.accion_propuesta
+    kin = ClipKinematics(
+        wrist_radial_vel_min=result.kin_wrist_radial_vel_min,
+        approach_monotone_frac=result.kin_approach_monotone_frac,
+        hip_speed_norm=result.kin_hip_speed_norm,
+        elbow_angle_deg=result.kin_elbow_angle_deg,
+        wrist_axis_dist_min=result.kin_wrist_axis_dist_min,
+        near_dwell_s=result.kin_near_dwell_s,
+        swing_peaks=result.kin_swing_peaks,
+        approach_depth=result.kin_approach_depth,
+    )
+    data["movement"] = build_movement_summary(
+        kin,
+        walk_frac=result.ctx_walk_frac,
+        stop_frac=result.ctx_stop_frac,
+        hand_to_body_raw=bool(result.hand_to_body_raw),
+        hand_to_body=bool(result.hand_to_body),
+        hand_to_body_confidence=float(result.hand_to_body_confidence),
+    )
     return data

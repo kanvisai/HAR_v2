@@ -81,3 +81,42 @@ def pocket_hand_to_body_confidence(
     strength = _evidence_strength(bp, cfg)
     conf = base * strength
     return round(max(0.0, min(1.0, conf)), 4)
+
+
+def refine_hand_to_body_confidence(
+    conf: float,
+    result: PocketResult,
+    cfg: PocketConfig,
+    signals: dict[str, float] | None = None,
+) -> float:
+    """
+    Ajuste post-kin/contexto: baja confianza en ACERCAMIENTO_EJE débil (pasillo, brazo lejos).
+    No cambia el veredicto geométrico ``hand_to_body_raw``.
+    """
+    bp = result.best_pair
+    if bp is None or bp.motivo != "ACERCAMIENTO_EJE_TORSO":
+        return conf
+
+    factor = 1.0
+    tuck_lim = cfg.axis_tuck_max
+    if bp.d_min is not None and tuck_lim > 0:
+        margin = tuck_lim - float(bp.d_min)
+        if margin < 0.03:
+            factor *= 0.78 + 0.22 * max(0.0, margin) / 0.03
+
+    if result.kin_wrist_axis_dist_min >= 0.38:
+        off = min(1.0, (result.kin_wrist_axis_dist_min - 0.38) / 0.45)
+        factor *= 1.0 - 0.35 * off
+
+    if result.kin_swing_peaks >= 2:
+        factor *= 0.92
+
+    sig = signals or {}
+    walk_frac = float(sig.get("walk_frac", result.ctx_walk_frac))
+    if walk_frac >= 0.35:
+        factor *= 0.88 - 0.08 * min(1.0, (walk_frac - 0.35) / 0.45)
+
+    if result.kin_hip_speed_norm > 0.55:
+        factor *= 0.94
+
+    return round(max(0.0, min(1.0, conf * factor)), 4)

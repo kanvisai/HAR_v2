@@ -174,6 +174,14 @@ def _merge_results(
     if not any_clear and any_raw:
         full.primary_action = "hand_to_body"
         full.primary_action_confidence = max_conf
+    full.kin_hip_speed_norm = meta.kin_hip_speed_norm
+    full.kin_near_dwell_s = meta.kin_near_dwell_s
+    full.kin_swing_peaks = meta.kin_swing_peaks
+    full.kin_approach_depth = meta.kin_approach_depth
+    full.kin_approach_monotone_frac = meta.kin_approach_monotone_frac
+    full.kin_wrist_radial_vel_min = meta.kin_wrist_radial_vel_min
+    full.kin_elbow_angle_deg = meta.kin_elbow_angle_deg
+    full.kin_wrist_axis_dist_min = meta.kin_wrist_axis_dist_min
     return full
 
 
@@ -191,8 +199,11 @@ def evaluate_pocket_temporal(
     config_path: Path | None = None,
     temporal: TemporalConfig | None = None,
 ) -> PocketResult:
+    from pocket_filter.timestamp_utils import prepare_frame_timestamps
+
     cfg = config or load_pocket_config(config_path)
     tcfg = temporal or load_temporal_config(config_path)
+    timestamps, _ = prepare_frame_timestamps(timestamps, len(poses), fps)
     clip_s = len(poses) / max(fps, 1e-6)
 
     full = evaluate_pocket(

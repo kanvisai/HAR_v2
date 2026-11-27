@@ -59,6 +59,7 @@ def _print_summary(
     result: PocketResult,
     poses_path: Path,
     fps: float,
+    config_path: Path | None = None,
 ) -> None:
     action_id = result.primary_action or (
         "hand_to_body" if hand_to_body else "inconclusive"
@@ -91,11 +92,16 @@ def _print_summary(
             f"  · conf {_conf_pct(result.hand_to_body_confidence)}"
             + (f"  · {result.context_veto}" if result.context_veto else "")
         )
-    policy_cfg = load_action_policy_config(args.config)
+    policy_cfg = load_action_policy_config(config_path)
     gate = policy_cfg.gate_mode if policy_cfg.enabled else "off"
     print(f"  Modo política:     {gate}")
+    if result.timestamps_source:
+        ts_note = result.timestamps_source
+        if result.timestamps_reject:
+            ts_note += f" (sidecar descartado: {result.timestamps_reject})"
+        print(f"  Tiempo:            {ts_note}")
     print(f"  Clip: {poses_path.name}  ·  {result.n_frames} frames · {fps:.1f} fps")
-    if result.intervalo_s != (0.0, result.n_frames / max(fps, 1e-6)) or use_temporal is not False:
+    if result.intervalo_s[1] > result.intervalo_s[0]:
         t0, t1 = result.intervalo_s
         print(f"  Ventana pico:      {t0:.2f}s → {t1:.2f}s")
     if result.motivo and (hand_to_body or result.hand_to_body_raw):
@@ -290,6 +296,7 @@ def main() -> None:
         result=result,
         poses_path=args.poses,
         fps=fps,
+        config_path=args.config,
     )
     if args.backend in ("mix", "scores"):
         leg = (

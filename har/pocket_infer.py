@@ -152,6 +152,10 @@ def infer_from_poses_bytes(
 def result_to_c3_dict(result: PocketResult, *, object_key: str | None = None) -> dict:
     d = pocket_result_to_dict(result)
     d["orchestrator_branch"] = orchestrator_branch(result)
+    if result.timestamps_source:
+        d["timestamps_source"] = result.timestamps_source
+    if result.timestamps_reject:
+        d["timestamps_reject"] = result.timestamps_reject
     if object_key is not None:
         d["poses_object_key"] = object_key
     return d
